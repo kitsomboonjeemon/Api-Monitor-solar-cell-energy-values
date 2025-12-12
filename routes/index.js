@@ -22,7 +22,7 @@ const fetchHpsData = async (deviceSn) => {
       headers: AUTH_HEADER,
     });
     return res.data?.data || {};
-  } catch {
+  } catch (err) {
     try {
       const fallback = await axios.get(`${BASE_URL}/hps/data-last-small`, {
         params: { deviceSn },
@@ -30,7 +30,7 @@ const fetchHpsData = async (deviceSn) => {
       });
       return fallback.data?.data || {};
     } catch (error) {
-      log("❌ Failed to fetch HPS realtime data:", error.message);
+      log("❌ Failed to fetch HPS realtime data:", error && error.message);
       return {};
     }
   }
@@ -57,33 +57,79 @@ const fetchHpsHistory = async (deviceSn, startDate, endDate, isStringType) => {
 
     return allData;
   } catch (err) {
-    log("❌ Failed to fetch HPS history:", err.message);
+    log("❌ Failed to fetch HPS history:", err && err.message);
     return [];
   }
 };
 
-router.get("/hps", async (req, res) => {
-  const { deviceSn } = req.query;
-  if (!deviceSn) return res.status(400).json({ error: "Missing deviceSn" });
+// Helper: get deviceSn from query, body or env fallback
+function getDeviceSnFromReq(req) {
+  return (
+    (req.query && req.query.deviceSn) ||
+    (req.body && req.body.deviceSn) ||
+    process.env.DEFAULT_DEVICE_SN ||
+    "YKD0F1022A"
+  );
+}
 
-  const data = await fetchHpsData(deviceSn);
-  const current =
-    parseFloat(data.ipv) ||
-    (parseFloat(data.ipva) || 0) +
-      (parseFloat(data.ipvb) || 0) +
-      (parseFloat(data.ipvc) || 0);
+// Helper: get param from query or body
+function getParam(req, name, defaultValue = undefined) {
+  if (req.query && typeof req.query[name] !== "undefined") return req.query[name];
+  if (req.body && typeof req.body[name] !== "undefined") return req.body[name];
+  return defaultValue;
+}
 
-  res.json({
-    pvPower: parseFloat(data.ppv1 || data.ppv) || 0,
-    pvVoltage: parseFloat(data.vpv || 0),
-    pvCurrent: current || 0,
-  });
+// Allow both GET and POST for realtime hps
+router.all("/hps", async (req, res) => {
+  const deviceSn = getDeviceSnFromReq(req);
+
+  if (!deviceSn) {
+    return res.status(400).json({ error: "Missing deviceSn" });
+  }
+
+  try {
+    const data = await fetchHpsData(deviceSn);
+
+    const current =
+      parseFloat(data.ipv) ||
+      ((parseFloat(data.ipva) || 0) +
+        (parseFloat(data.ipvb) || 0) +
+        (parseFloat(data.ipvc) || 0));
+
+    return res.json({
+      pvPower: parseFloat(data.ppv1 || data.ppv) || 0,
+      pvVoltage: parseFloat(data.vpv || 0),
+      pvCurrent: current || 0,
+      // include raw payload if useful
+      _raw: data,
+    });
+  } catch (err) {
+    log("❌ /hps handler error:", err && err.message);
+    return res.status(500).json({ error: "Failed to fetch hps data" });
+  }
 });
 
-router.get("/hps/history", async (req, res) => {
-  const { deviceSn, type = "central", startDate, endDate } = req.query;
+// Allow both GET and POST for history
+router.all("/hps/history", async (req, res) => {
+  const deviceSn = getDeviceSnFromReq(req);
+  const type = getParam(req, "type", "central");
+  // accept startDate/endDate from query or body; also accept ISO / YYYY-MM-DD
+  let startDate = getParam(req, "startDate");
+  let endDate = getParam(req, "endDate");
+
+  // If dates are not provided, default to today (or choose behavior you prefer)
+  // Here we error if missing, keeping original behavior, but now deviceSn fallback exists
   if (!deviceSn || !startDate || !endDate) {
-    return res.status(400).json({ error: "Missing required parameters" });
+    return res.status(400).json({ error: "Missing required parameters (deviceSn, startDate, endDate)" });
+  }
+
+  // normalize dates (optionally)
+  try {
+    // try to format to YYYY-MM-DD if possible
+    startDate = dayjs(startDate).format("YYYY-MM-DD");
+    endDate = dayjs(endDate).format("YYYY-MM-DD");
+  } catch (e) {
+    // ignore formatting error and pass raw values to API
   }
 
   try {
@@ -110,15 +156,13 @@ router.get("/hps/history", async (req, res) => {
     }));
 
     if (transformed.length === 0) {
-      return res
-        .status(204)
-        .json({ message: "No data available in this time range" });
+      return res.status(204).json({ message: "No data available in this time range" });
     }
 
-    res.json({ data: transformed });
+    return res.json({ data: transformed });
   } catch (err) {
-    log("❌ Failed to transform history:", err.message);
-    res.status(500).json({ error: "Failed to fetch historical data" });
+    log("❌ Failed to transform history:", err && err.message);
+    return res.status(500).json({ error: "Failed to fetch historical data" });
   }
 });
 
