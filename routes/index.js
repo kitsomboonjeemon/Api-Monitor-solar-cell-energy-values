@@ -20,6 +20,7 @@ const fetchHpsData = async (deviceSn) => {
     const res = await axios.get(`${BASE_URL}/hps/data-last`, {
       params: { deviceSn },
       headers: AUTH_HEADER,
+      timeout: 10000,
     });
     return res.data?.data || {};
   } catch (err) {
@@ -27,6 +28,7 @@ const fetchHpsData = async (deviceSn) => {
       const fallback = await axios.get(`${BASE_URL}/hps/data-last-small`, {
         params: { deviceSn },
         headers: AUTH_HEADER,
+        timeout: 10000,
       });
       return fallback.data?.data || {};
     } catch (error) {
@@ -47,9 +49,12 @@ const fetchHpsHistory = async (deviceSn, startDate, endDate, isStringType) => {
       const res = await axios.get(`${BASE_URL}/${endpoint}`, {
         params: { deviceSn, startDate, endDate, pageNo, pageSize },
         headers: AUTH_HEADER,
+        timeout: 20000,
       });
 
-      const pageData = res.data?.data?.datas || [];
+      // Atess sometimes returns data.datas or data (array). Be flexible.
+      const pageData = res.data?.data?.datas || res.data?.data || [];
+      if (!Array.isArray(pageData)) break;
       allData.push(...pageData);
       if (pageData.length < pageSize) break;
       pageNo++;
@@ -92,14 +97,13 @@ router.all("/hps", async (req, res) => {
 
     const current =
       parseFloat(data.ipv) ||
-      ((parseFloat(data.ipva) || 0) +
-        (parseFloat(data.ipvb) || 0) +
-        (parseFloat(data.ipvc) || 0));
+      ((parseFloat(data.ipva) || 0) + (parseFloat(data.ipvb) || 0) + (parseFloat(data.ipvc) || 0));
 
     return res.json({
-      pvPower: parseFloat(data.ppv1 || data.ppv) || 0,
+      pvPower: parseFloat(data.ppv1 || data.ppv || 0) || 0,
       pvVoltage: parseFloat(data.vpv || 0),
       pvCurrent: current || 0,
+      pvEnergy: parseFloat(data.epv || data.epvToday || 0),
       // include raw payload if useful
       _raw: data,
     });
@@ -117,46 +121,54 @@ router.all("/hps/history", async (req, res) => {
   let startDate = getParam(req, "startDate");
   let endDate = getParam(req, "endDate");
 
-  // If dates are not provided, default to today (or choose behavior you prefer)
-  // Here we error if missing, keeping original behavior, but now deviceSn fallback exists
   if (!deviceSn || !startDate || !endDate) {
     return res.status(400).json({ error: "Missing required parameters (deviceSn, startDate, endDate)" });
   }
 
-  // normalize dates (optionally)
+  // normalize dates to YYYY-MM-DD (safe)
   try {
-    // try to format to YYYY-MM-DD if possible
     startDate = dayjs(startDate).format("YYYY-MM-DD");
     endDate = dayjs(endDate).format("YYYY-MM-DD");
   } catch (e) {
-    // ignore formatting error and pass raw values to API
+    // ignore formatting error; pass raw
   }
 
   try {
-    const rawData = await fetchHpsHistory(
-      deviceSn,
-      startDate,
-      endDate,
-      type === "string"
-    );
+    const rawData = await fetchHpsHistory(deviceSn, startDate, endDate, type === "string");
 
-    const transformed = rawData.map((item) => ({
-      ...item,
-      time: item.time,
-      pvPower: parseFloat(item.ppv1 || item.ppv || 0),
-      pvVoltage: parseFloat(item.vpv || 0),
-      pvCurrent: parseFloat(item.ipv || 0),
-      pvEnergy: parseFloat(item.epvToday || 0),
-      batCharge: parseFloat(item.echargeToday || 0),
-      batDischarge: parseFloat(item.edischargeToday || 0),
-      gridImport: parseFloat(item.egridToday || 0),
-      gridExport: parseFloat(item.etoGridToday || 0),
-      loadEnergy: parseFloat(item.eloadToday || 0),
-      outputFreq: parseFloat(item.fac || 0),
-    }));
+    const transformed = rawData.map((item) => {
+      // time: prefer item.time; fallback to common variants
+      const time = item.time || item.datetime || item.recordTime || item.ts || null;
+
+      const pvPower = parseFloat(item.ppv1 || item.ppv || 0) || 0;
+      const pvVoltage = parseFloat(item.vpv || 0) || 0;
+
+      const pvCurrent =
+        parseFloat(item.ipv || 0) ||
+        ((parseFloat(item.ipva || 0) || 0) + (parseFloat(item.ipvb || 0) || 0) + (parseFloat(item.ipvc || 0) || 0)) ||
+        0;
+
+      // prefer epv (per-record/cumulative at timestamp), fallback to epvTotal or epvToday
+      const pvEnergy = parseFloat(item.epv || item.epvTotal || item.epvToday || 0) || 0;
+
+      return {
+        ...item,
+        time,
+        pvPower,
+        pvVoltage,
+        pvCurrent,
+        pvEnergy,
+        batCharge: parseFloat(item.echarge || item.echargeToday || 0) || 0,
+        batDischarge: parseFloat(item.edischarge || item.edischargeToday || 0) || 0,
+        gridImport: parseFloat(item.egrid || item.egridToday || 0) || 0,
+        gridExport: parseFloat(item.etoGrid || item.etoGridToday || 0) || 0,
+        loadEnergy: parseFloat(item.eload || item.eloadToday || 0) || 0,
+        outputFreq: parseFloat(item.fac || 0) || 0,
+      };
+    });
 
     if (transformed.length === 0) {
-      return res.status(204).json({ message: "No data available in this time range" });
+      return res.status(204).json({ message: "No data available in this time range", data: [] });
     }
 
     return res.json({ data: transformed });
