@@ -16,6 +16,7 @@ const log = (...args) => {
   console.log(`[${time}]`, ...args);
 };
 
+// ------------------------- REALTIME -------------------------
 const fetchHpsData = async (deviceSn) => {
   try {
     const res = await axios.get(`${BASE_URL}/hps/data-last`, {
@@ -33,30 +34,28 @@ const fetchHpsData = async (deviceSn) => {
       });
       return fallback.data?.data || {};
     } catch (error) {
-      log("❌ Failed to fetch HPS realtime data:", error && error.message);
+      log("❌ Failed to fetch HPS realtime:", error.message);
       return {};
     }
   }
 };
 
+// ------------------------- HISTORY -------------------------
 const extractPageDataFlexible = (res) => {
-  // Try many shapes
   if (!res || typeof res !== "object") return [];
+
   const d = res.data;
   if (Array.isArray(d?.datas)) return d.datas;
   if (Array.isArray(d)) return d;
   if (Array.isArray(res?.data)) return res.data;
   if (Array.isArray(d?.list)) return d.list;
   if (Array.isArray(d?.items)) return d.items;
-  if (Array.isArray(res?.datas)) return res.datas;
-  // if d is object single item (not array), return the object
+
+  // single record?
   if (d && typeof d === "object" && !Array.isArray(d)) {
-    // if d looks like a single record (has time/ppv/vpv etc) return as single object
-    const keys = Object.keys(d);
-    if (keys.length && (d.time || d.ppv || d.vpv || d.epvToday || d.epv)) {
-      return d; // single object
-    }
+    if (d.time || d.ppv || d.vpv || d.epv) return d;
   }
+
   return [];
 };
 
@@ -74,10 +73,8 @@ const fetchHpsHistory = async (deviceSn, startDate, endDate, isStringType) => {
         timeout: 20000,
       });
 
-      // flexible extractor
       const pageData = extractPageDataFlexible(res);
 
-      // if returned an array -> concat and maybe continue paging
       if (Array.isArray(pageData)) {
         allData.push(...pageData);
         if (pageData.length < pageSize) break;
@@ -85,54 +82,50 @@ const fetchHpsHistory = async (deviceSn, startDate, endDate, isStringType) => {
         continue;
       }
 
-      // if returned a single object -> push and stop paging
       if (pageData && typeof pageData === "object") {
         allData.push(pageData);
         break;
       }
 
-      // nothing useful -> stop
       break;
     }
 
     return allData;
   } catch (err) {
-    log("❌ Failed to fetch HPS history:", err && err.message);
+    log("❌ Failed to fetch history:", err.message);
     return [];
   }
 };
 
-// Helper: get deviceSn from query, body or env fallback
+// ------------------------- HELPERS -------------------------
 function getDeviceSnFromReq(req) {
   return (
-    (req.query && req.query.deviceSn) ||
-    (req.body && req.body.deviceSn) ||
+    req.query?.deviceSn ||
+    req.body?.deviceSn ||
     process.env.DEFAULT_DEVICE_SN ||
     "YKD0F1022A"
   );
 }
 
-// Helper: get param from query or body
-function getParam(req, name, defaultValue = undefined) {
-  if (req.query && typeof req.query[name] !== "undefined") return req.query[name];
-  if (req.body && typeof req.body[name] !== "undefined") return req.body[name];
+function getParam(req, name, defaultValue) {
+  if (req.query?.[name] !== undefined) return req.query[name];
+  if (req.body?.[name] !== undefined) return req.body[name];
   return defaultValue;
 }
 
-// Allow both GET and POST for realtime hps
+// ------------------------- REALTIME API -------------------------
 router.all("/hps", async (req, res) => {
   const deviceSn = getDeviceSnFromReq(req);
-
-  if (!deviceSn) {
-    return res.status(400).json({ error: "Missing deviceSn" });
-  }
+  if (!deviceSn) return res.status(400).json({ error: "Missing deviceSn" });
 
   try {
     const data = await fetchHpsData(deviceSn);
 
     const current =
       parseFloat(data.ipv) ||
-      ((parseFloat(data.ipva) || 0) + (parseFloat(data.ipvb) || 0) + (parseFloat(data.ipvc) || 0));
+      (parseFloat(data.ipva || 0) +
+        parseFloat(data.ipvb || 0) +
+        parseFloat(data.ipvc || 0));
 
     return res.json({
       pvPower: parseFloat(data.ppv1 || data.ppv || 0) || 0,
@@ -142,146 +135,89 @@ router.all("/hps", async (req, res) => {
       _raw: data,
     });
   } catch (err) {
-    log("❌ /hps handler error:", err && err.message);
-    return res.status(500).json({ error: "Failed to fetch hps data" });
+    return res.status(500).json({ error: "Failed to fetch realtime" });
   }
 });
 
-// Allow both GET and POST for history (single implementation, supports aggregate=day)
+// ------------------------- HISTORY API -------------------------
 router.all("/hps/history", async (req, res) => {
-  // DEBUG log for incoming request
-  log("📥 /api/hps/history request", {
-    method: req.method,
-    query: req.query,
-    body: req.body,
-    ip: req.ip,
-  });
+  log("📥 /hps/history request", req.query);
 
   const deviceSn = getDeviceSnFromReq(req);
   const type = getParam(req, "type", "central");
+
   let startDate = getParam(req, "startDate");
   let endDate = getParam(req, "endDate");
-  const aggregate = getParam(req, "aggregate", "none"); // 'none' or 'day'
 
   if (!deviceSn || !startDate || !endDate) {
-    return res.status(400).json({ error: "Missing required parameters (deviceSn, startDate, endDate)" });
-  }
-
-  try {
-    // normalize basic date strings to YYYY-MM-DD if possible
-    startDate = dayjs(startDate).format("YYYY-MM-DD");
-    endDate = dayjs(endDate).format("YYYY-MM-DD");
-  } catch (e) {
-    // ignore if formatting fails and pass raw values
-  }
-
-  try {
-    const rawData = await fetchHpsHistory(deviceSn, startDate, endDate, type === "string");
-
-    // safety: ensure array
-    const rawArray = Array.isArray(rawData) ? rawData : (rawData ? [rawData] : []);
-
-    const transformed = rawArray.map((item) => {
-      // try several time fields
-      let time = item.time || item.datetime || item.recordTime || item.ts || item.date || null;
-
-      const pvPower = parseFloat(item.ppv1 || item.ppv || 0) || 0;
-      const pvVoltage = parseFloat(item.vpv || 0) || 0;
-
-      const pvCurrent =
-        parseFloat(item.ipv || 0) ||
-        ((parseFloat(item.ipva || 0) || 0) + (parseFloat(item.ipvb || 0) || 0) + (parseFloat(item.ipvc || 0) || 0)) ||
-        0;
-
-      const pvEnergy = parseFloat(item.epv || item.epvTotal || item.epvToday || 0) || 0;
-
-      return {
-        ...item,
-        time,
-        pvPower,
-        pvVoltage,
-        pvCurrent,
-        pvEnergy,
-        batCharge: parseFloat(item.echarge || item.echargeToday || 0) || 0,
-        batDischarge: parseFloat(item.edischarge || item.edischargeToday || 0) || 0,
-        gridImport: parseFloat(item.egrid || item.egridToday || 0) || 0,
-        gridExport: parseFloat(item.etoGrid || item.etoGridToday || 0) || 0,
-        loadEnergy: parseFloat(item.eload || item.eloadToday || 0) || 0,
-        outputFreq: parseFloat(item.fac || 0) || 0,
-      };
+    return res.status(400).json({
+      error: "Missing required parameters (deviceSn,startDate,endDate)",
     });
+  }
 
-    // if aggregate=day requested, reduce to daily summary
-    if (aggregate === "day") {
-      const byDay = {};
-      for (const it of transformed) {
-        // determine date key. try to create dayjs object from known time fields
-        let ts = null;
-        if (it.time) {
-          ts = dayjs(it.time);
-          if (!ts.isValid()) {
-            // try other fields fallback
-            ts = dayjs(it.datetime || it.date || undefined);
-          }
-        } else {
-          ts = dayjs(it.datetime || it.date || undefined);
-        }
-        const dayKey = ts && ts.isValid() ? ts.format("YYYY-MM-DD") : "unknown";
+  // normalize date format
+  startDate = dayjs(startDate).format("YYYY-MM-DD");
+  endDate = dayjs(endDate).format("YYYY-MM-DD");
 
-        if (!byDay[dayKey]) {
-          byDay[dayKey] = {
-            date: dayKey,
-            pvEnergy: 0,
-            batCharge: 0,
-            batDischarge: 0,
-            gridImport: 0,
-            gridExport: 0,
-            loadEnergy: 0,
-            outputFreqSum: 0,
-            outputFreqCount: 0,
-            pvPowerMax: 0,
-          };
-        }
+  // fetch history
+  const rawData = await fetchHpsHistory(deviceSn, startDate, endDate, type === "string");
 
-        byDay[dayKey].pvEnergy += Number(it.pvEnergy || 0);
-        byDay[dayKey].batCharge += Number(it.batCharge || 0);
-        byDay[dayKey].batDischarge += Number(it.batDischarge || 0);
-        byDay[dayKey].gridImport += Number(it.gridImport || 0);
-        byDay[dayKey].gridExport += Number(it.gridExport || 0);
-        byDay[dayKey].loadEnergy += Number(it.loadEnergy || 0);
+  // ------------------------- FALLBACK AUTO -------------------------
+  if (!rawData || rawData.length === 0) {
+    log("⚠️ No history found → using realtime fallback");
 
-        if (typeof it.outputFreq === "number" && !Number.isNaN(it.outputFreq)) {
-          byDay[dayKey].outputFreqSum += it.outputFreq;
-          byDay[dayKey].outputFreqCount += 1;
-        }
+    const now = await fetchHpsData(deviceSn);
 
-        if (typeof it.pvPower === "number" && it.pvPower > byDay[dayKey].pvPowerMax) {
-          byDay[dayKey].pvPowerMax = it.pvPower;
-        }
-      }
-
-      const daily = Object.values(byDay).map((d) => ({
-        date: d.date,
-        pvEnergy: Number(d.pvEnergy.toFixed(3)),
-        batCharge: Number(d.batCharge.toFixed(3)),
-        batDischarge: Number(d.batDischarge.toFixed(3)),
-        gridImport: Number(d.gridImport.toFixed(3)),
-        gridExport: Number(d.gridExport.toFixed(3)),
-        loadEnergy: Number(d.loadEnergy.toFixed(3)),
-        outputFreq: d.outputFreqCount > 0 ? Number((d.outputFreqSum / d.outputFreqCount).toFixed(3)) : 0,
-        pvPowerMax: Number(d.pvPowerMax.toFixed(3)),
-      }));
-
-      daily.sort((a, b) => (a.date > b.date ? 1 : -1));
-      return res.json({ data: daily });
+    if (now && Object.keys(now).length > 0) {
+      return res.json({
+        data: [
+          {
+            time: now.time || new Date().toISOString(),
+            pvPower: parseFloat(now.ppv1 || now.ppv || 0),
+            pvVoltage: parseFloat(now.vpv || 0),
+            pvCurrent:
+              parseFloat(now.ipv || 0) +
+              parseFloat(now.ipva || 0) +
+              parseFloat(now.ipvb || 0) +
+              parseFloat(now.ipvc || 0),
+            pvEnergy: parseFloat(now.epvToday || now.epv || 0),
+          },
+        ],
+      });
     }
 
-    // Return array wrapped in data property (frontend convenience)
-    return res.json({ data: transformed });
-  } catch (err) {
-    log("❌ Failed to transform history:", err && err.message);
-    return res.status(500).json({ error: "Failed to fetch historical data" });
+    return res.json({ data: [] });
   }
+
+  // ------------------------- TRANSFORM DATA -------------------------
+  const transformed = rawData.map((item) => {
+    let time =
+      item.time ||
+      item.datetime ||
+      item.recordTime ||
+      item.ts ||
+      item.date ||
+      null;
+
+    const pvPower = parseFloat(item.ppv1 || item.ppv || 0) || 0;
+    const pvVoltage = parseFloat(item.vpv || 0) || 0;
+
+    const pvCurrent =
+      parseFloat(item.ipv || 0) ||
+      (parseFloat(item.ipva || 0) +
+        parseFloat(item.ipvb || 0) +
+        parseFloat(item.ipvc || 0));
+
+    return {
+      ...item,
+      time,
+      pvPower,
+      pvVoltage,
+      pvCurrent,
+    };
+  });
+
+  return res.json({ data: transformed });
 });
 
 module.exports = router;
