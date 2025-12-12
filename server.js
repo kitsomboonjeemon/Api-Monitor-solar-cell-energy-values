@@ -14,10 +14,26 @@ app.use(express.urlencoded({ extended: true }));
 const DEFAULT_DEVICE_SN = process.env.DEFAULT_DEVICE_SN || "YKD0F1022A";
 
 // ===== Middleware: auto inject deviceSn =====
+// เติม deviceSn ให้ทั้ง Query และ Body
 app.use((req, res, next) => {
-  if (req.originalUrl.startsWith("/api/hps") && !req.query.deviceSn) {
-    req.query.deviceSn = DEFAULT_DEVICE_SN;
+  try {
+    if (req.originalUrl.startsWith("/api/hps")) {
+      // ensure query
+      req.query = req.query || {};
+      if (!req.query.deviceSn) {
+        req.query.deviceSn = DEFAULT_DEVICE_SN;
+      }
+
+      // ensure body
+      req.body = req.body || {};
+      if (!req.body.deviceSn) {
+        req.body.deviceSn = DEFAULT_DEVICE_SN;
+      }
+    }
+  } catch (err) {
+    console.warn("Default deviceSn middleware error:", err.message);
   }
+
   next();
 });
 
