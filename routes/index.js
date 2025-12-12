@@ -1,3 +1,4 @@
+// routes/index.js  (หรือไฟล์ router ของคุณ)
 const express = require("express");
 const axios = require("axios");
 const dayjs = require("dayjs");
@@ -104,7 +105,6 @@ router.all("/hps", async (req, res) => {
       pvVoltage: parseFloat(data.vpv || 0),
       pvCurrent: current || 0,
       pvEnergy: parseFloat(data.epv || data.epvToday || 0),
-      // include raw payload if useful
       _raw: data,
     });
   } catch (err) {
@@ -115,6 +115,14 @@ router.all("/hps", async (req, res) => {
 
 // Allow both GET and POST for history (single implementation, supports aggregate=day)
 router.all("/hps/history", async (req, res) => {
+  // DEBUG log for incoming request
+  log("📥 /api/hps/history request", {
+    method: req.method,
+    query: req.query,
+    body: req.body,
+    ip: req.ip,
+  });
+
   const deviceSn = getDeviceSnFromReq(req);
   const type = getParam(req, "type", "central");
   let startDate = getParam(req, "startDate");
@@ -126,18 +134,25 @@ router.all("/hps/history", async (req, res) => {
   }
 
   try {
+    // normalize basic date strings to YYYY-MM-DD if possible
     startDate = dayjs(startDate).format("YYYY-MM-DD");
     endDate = dayjs(endDate).format("YYYY-MM-DD");
   } catch (e) {
-    // ignore format errors, pass raw strings through
+    // ignore if formatting fails and pass raw values
   }
 
   try {
     const rawData = await fetchHpsHistory(deviceSn, startDate, endDate, type === "string");
 
-    const transformed = rawData.map((item) => {
-      const time = item.time || item.datetime || item.recordTime || item.ts || null;
+    // safety: ensure array
+    const rawArray = Array.isArray(rawData) ? rawData : [];
 
+    const transformed = rawArray.map((item) => {
+      // try several time fields
+      let time = item.time || item.datetime || item.recordTime || item.ts || item.date || null;
+
+      // if time is numeric string or number likely seconds / ms — let dayjs handle flexible parsing where possible
+      // keep raw time as-is; front-end will parse/normalize; also keep item for debugging
       const pvPower = parseFloat(item.ppv1 || item.ppv || 0) || 0;
       const pvVoltage = parseFloat(item.vpv || 0) || 0;
 
@@ -168,9 +183,18 @@ router.all("/hps/history", async (req, res) => {
     if (aggregate === "day") {
       const byDay = {};
       for (const it of transformed) {
-        // determine date key in plant timezone (assume server local / UTC => use dayjs to format)
-        const ts = it.time ? dayjs(it.time) : dayjs(it.time || it.date || it.datetime || undefined);
-        const dayKey = ts.isValid() ? ts.format("YYYY-MM-DD") : "unknown";
+        // determine date key. try to create dayjs object from known time fields
+        let ts = null;
+        if (it.time) {
+          ts = dayjs(it.time);
+          if (!ts.isValid()) {
+            // try other fields fallback
+            ts = dayjs(it.datetime || it.date || undefined);
+          }
+        } else {
+          ts = dayjs(it.datetime || it.date || undefined);
+        }
+        const dayKey = ts && ts.isValid() ? ts.format("YYYY-MM-DD") : "unknown";
 
         if (!byDay[dayKey]) {
           byDay[dayKey] = {
@@ -204,7 +228,6 @@ router.all("/hps/history", async (req, res) => {
         }
       }
 
-      // convert object to array with averages where appropriate
       const daily = Object.values(byDay).map((d) => ({
         date: d.date,
         pvEnergy: Number(d.pvEnergy.toFixed(3)),
@@ -217,17 +240,13 @@ router.all("/hps/history", async (req, res) => {
         pvPowerMax: Number(d.pvPowerMax.toFixed(3)),
       }));
 
-      // sort by date ascending
       daily.sort((a, b) => (a.date > b.date ? 1 : -1));
-      return res.json(daily);
+      // return with data wrapper for frontend compatibility
+      return res.json({ data: daily });
     }
 
-    // Return array directly. If empty -> return [] (status 200)
-    if (!Array.isArray(transformed) || transformed.length === 0) {
-      return res.json([]);
-    }
-
-    return res.json(transformed);
+    // Return array wrapped in data property (frontend convenience)
+    return res.json({ data: transformed });
   } catch (err) {
     log("❌ Failed to transform history:", err && err.message);
     return res.status(500).json({ error: "Failed to fetch historical data" });
