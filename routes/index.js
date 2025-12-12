@@ -1,4 +1,4 @@
-// routes/index.js  (หรือไฟล์ router ของคุณ)
+// routes/index.js
 const express = require("express");
 const axios = require("axios");
 const dayjs = require("dayjs");
@@ -39,6 +39,27 @@ const fetchHpsData = async (deviceSn) => {
   }
 };
 
+const extractPageDataFlexible = (res) => {
+  // Try many shapes
+  if (!res || typeof res !== "object") return [];
+  const d = res.data;
+  if (Array.isArray(d?.datas)) return d.datas;
+  if (Array.isArray(d)) return d;
+  if (Array.isArray(res?.data)) return res.data;
+  if (Array.isArray(d?.list)) return d.list;
+  if (Array.isArray(d?.items)) return d.items;
+  if (Array.isArray(res?.datas)) return res.datas;
+  // if d is object single item (not array), return the object
+  if (d && typeof d === "object" && !Array.isArray(d)) {
+    // if d looks like a single record (has time/ppv/vpv etc) return as single object
+    const keys = Object.keys(d);
+    if (keys.length && (d.time || d.ppv || d.vpv || d.epvToday || d.epv)) {
+      return d; // single object
+    }
+  }
+  return [];
+};
+
 const fetchHpsHistory = async (deviceSn, startDate, endDate, isStringType) => {
   try {
     const endpoint = isStringType ? "hps/data-list-small" : "hps/data-list";
@@ -53,12 +74,25 @@ const fetchHpsHistory = async (deviceSn, startDate, endDate, isStringType) => {
         timeout: 20000,
       });
 
-      // Atess sometimes returns data.datas or data (array). Be flexible.
-      const pageData = res.data?.data?.datas || res.data?.data || [];
-      if (!Array.isArray(pageData)) break;
-      allData.push(...pageData);
-      if (pageData.length < pageSize) break;
-      pageNo++;
+      // flexible extractor
+      const pageData = extractPageDataFlexible(res);
+
+      // if returned an array -> concat and maybe continue paging
+      if (Array.isArray(pageData)) {
+        allData.push(...pageData);
+        if (pageData.length < pageSize) break;
+        pageNo++;
+        continue;
+      }
+
+      // if returned a single object -> push and stop paging
+      if (pageData && typeof pageData === "object") {
+        allData.push(pageData);
+        break;
+      }
+
+      // nothing useful -> stop
+      break;
     }
 
     return allData;
@@ -145,14 +179,12 @@ router.all("/hps/history", async (req, res) => {
     const rawData = await fetchHpsHistory(deviceSn, startDate, endDate, type === "string");
 
     // safety: ensure array
-    const rawArray = Array.isArray(rawData) ? rawData : [];
+    const rawArray = Array.isArray(rawData) ? rawData : (rawData ? [rawData] : []);
 
     const transformed = rawArray.map((item) => {
       // try several time fields
       let time = item.time || item.datetime || item.recordTime || item.ts || item.date || null;
 
-      // if time is numeric string or number likely seconds / ms — let dayjs handle flexible parsing where possible
-      // keep raw time as-is; front-end will parse/normalize; also keep item for debugging
       const pvPower = parseFloat(item.ppv1 || item.ppv || 0) || 0;
       const pvVoltage = parseFloat(item.vpv || 0) || 0;
 
@@ -241,7 +273,6 @@ router.all("/hps/history", async (req, res) => {
       }));
 
       daily.sort((a, b) => (a.date > b.date ? 1 : -1));
-      // return with data wrapper for frontend compatibility
       return res.json({ data: daily });
     }
 
