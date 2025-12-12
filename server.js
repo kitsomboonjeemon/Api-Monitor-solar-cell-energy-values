@@ -7,6 +7,35 @@ const PORT = 3001;
 
 app.use(cors());
 
+// --- เพิ่ม body parsers (เพื่อให้รับ JSON/URL-encoded ถ้า route ใช้ POST) ---
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// ====== DEFAULT deviceSn (ถ้าไม่ได้ส่งจาก client จะใช้ค่านี้) ======
+// คุณสามารถเปลี่ยนค่า default ได้ที่ process.env.DEFAULT_DEVICE_SN
+// หรือแก้ค่าในตัวแปรด้านล่างเป็น deviceSn ที่ต้องการ
+const DEFAULT_DEVICE_SN = process.env.DEFAULT_DEVICE_SN || "YKD0F1022A";
+
+// Middleware: ถ้าเรียก /api/hps แต่ไม่มี query.deviceSn ให้เติมค่า default ให้
+app.use((req, res, next) => {
+  try {
+    // ตรวจ originalUrl เพื่อให้ทำงานก่อน mount /api routes
+    if (
+      req.originalUrl &&
+      req.originalUrl.startsWith("/api/hps") && // /api/hps หรือ /api/hps/...
+      (!req.query || !req.query.deviceSn)
+    ) {
+      // เติม query param deviceSn ให้ (จะถูกอ่านได้ทั้งใน req.query และใน route ที่เรียกต่อ)
+      req.query = req.query || {};
+      req.query.deviceSn = DEFAULT_DEVICE_SN;
+    }
+  } catch (err) {
+    // ไม่ให้ middleware ล้มทั้งหมดถ้ามี error เล็กน้อย
+    console.warn("middleware default deviceSn warn:", err && err.message);
+  }
+  next();
+});
+
 // 🔗 นำเข้า router และ util
 const hpsRoutes = require("./routes/index");
 const { fetchRealtimeData } = require("./routes/excelUtil");
