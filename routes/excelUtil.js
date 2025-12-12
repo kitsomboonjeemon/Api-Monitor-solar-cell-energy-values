@@ -2,7 +2,7 @@ const axios = require("axios");
 const fetch = require("node-fetch");
 
 // ========== CONFIG ==========
-const DEVICE_SN = "YKD0F1022A";
+const DEVICE_SN = process.env.DEFAULT_DEVICE_SN || "YKD0F1022A";
 const BASE_URL = "https://www.enerclo-atesspower.com/api/v1";
 const AUTH_HEADER = {
   Authorization: "Basic MTcxOTpjOTAyNGVmMjA5ZWU0ZWFhOTgyYWQ2YWQ2NTQxZDlhYg==",
@@ -98,12 +98,18 @@ const fetchRealtimeData = async () => {
       };
     }
 
-    const pvPower = safeParse(data?.ppv1);
-    const pvEnergy = safeParse(data?.epvToday);
+    // อ่านค่า pvPower รองรับทั้ง ppv1 และ ppv
+    const pvPower = safeParse(data?.ppv1 || data?.ppv || 0);
+
+    // pvEnergy: prefer per-record epv if provided, otherwise fallback to epvToday
+    const pvEnergy = safeParse(data?.epv || data?.epvToday || 0);
+
     const irradiance = estimateIrradiance(pvPower);
+
+    // pvCurrent: ใช้ ipv ถ้ามี ถ้าไม่มีรวม ipva/ipvb/ipvc
     const pvCurrent =
       safeParse(data?.ipv) ||
-      safeParse(data?.ipva) + safeParse(data?.ipvb) + safeParse(data?.ipvc);
+      (safeParse(data?.ipva) + safeParse(data?.ipvb) + safeParse(data?.ipvc));
 
     const weather = await fetchWeather();
     const backplaneTemp =
@@ -118,11 +124,11 @@ const fetchRealtimeData = async () => {
       pvCurrent,
       pvCurrent1: safeParse(data?.ipv),
       pvEnergy,
-      batCharge: safeParse(data?.echargeToday),
-      batDischarge: safeParse(data?.edischargeToday),
-      gridImport: safeParse(data?.egridToday),
-      gridExport: safeParse(data?.etoGridToday),
-      loadEnergy: safeParse(data?.eloadToday),
+      batCharge: safeParse(data?.echargeToday || data?.echarge || 0),
+      batDischarge: safeParse(data?.edischargeToday || data?.edischarge || 0),
+      gridImport: safeParse(data?.egridToday || data?.egrid || 0),
+      gridExport: safeParse(data?.etoGridToday || data?.etoGrid || 0),
+      loadEnergy: safeParse(data?.eloadToday || data?.eload || 0),
       outputFreq: safeParse(data?.fac),
       co2Reduced: pvEnergy * 0.9,
       ktoe: pvEnergy / 11630,
