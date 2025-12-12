@@ -6,70 +6,54 @@ const app = express();
 const PORT = 3001;
 
 app.use(cors());
-
-// --- เพิ่ม body parsers (เพื่อให้รับ JSON/URL-encoded ถ้า route ใช้ POST) ---
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ====== DEFAULT deviceSn (ถ้าไม่ได้ส่งจาก client จะใช้ค่านี้) ======
-// คุณสามารถเปลี่ยนค่า default ได้ที่ process.env.DEFAULT_DEVICE_SN
-// หรือแก้ค่าในตัวแปรด้านล่างเป็น deviceSn ที่ต้องการ
+// ===== DEFAULT deviceSn =====
+// ใช้ค่านี้เมื่อ frontend ไม่ได้ส่ง deviceSn มา
 const DEFAULT_DEVICE_SN = process.env.DEFAULT_DEVICE_SN || "YKD0F1022A";
 
-// Middleware: ถ้าเรียก /api/hps แต่ไม่มี query.deviceSn ให้เติมค่า default ให้
+// ===== Middleware: auto inject deviceSn =====
 app.use((req, res, next) => {
-  try {
-    // ตรวจ originalUrl เพื่อให้ทำงานก่อน mount /api routes
-    if (
-      req.originalUrl &&
-      req.originalUrl.startsWith("/api/hps") && // /api/hps หรือ /api/hps/...
-      (!req.query || !req.query.deviceSn)
-    ) {
-      // เติม query param deviceSn ให้ (จะถูกอ่านได้ทั้งใน req.query และใน route ที่เรียกต่อ)
-      req.query = req.query || {};
-      req.query.deviceSn = DEFAULT_DEVICE_SN;
-    }
-  } catch (err) {
-    // ไม่ให้ middleware ล้มทั้งหมดถ้ามี error เล็กน้อย
-    console.warn("middleware default deviceSn warn:", err && err.message);
+  if (req.originalUrl.startsWith("/api/hps") && !req.query.deviceSn) {
+    req.query.deviceSn = DEFAULT_DEVICE_SN;
   }
   next();
 });
 
-// 🔗 นำเข้า router และ util
+// ===== ROUTES =====
 const hpsRoutes = require("./routes/index");
 const { fetchRealtimeData } = require("./routes/excelUtil");
 
-// ====== LOG Helper ======
+// LOG helper
 const log = (...args) => {
-  const time = new Date().toISOString();
-  console.log(`[${time}]`, ...args);
+  console.log(`[${new Date().toISOString()}]`, ...args);
 };
 
-// ====== Summary Cache (ใช้จาก fetchRealtimeData) ======
+// ===== SUMMARY CACHE =====
 let cachedSummary = null;
 
 const fetchAndCacheSummary = async () => {
-  const realtime = await fetchRealtimeData();
-  if (realtime) {
-    cachedSummary = {
-      ...realtime,
-      source: "live",
-    };
-  } else {
-    log("⚠️ No realtime data fetched");
+  try {
+    const realtime = await fetchRealtimeData();
+    if (realtime) {
+      cachedSummary = { ...realtime, source: "live" };
+    } else {
+      log("⚠️ No realtime data fetched");
+    }
+  } catch (err) {
+    log("❌ fetchAndCacheSummary error:", err.message);
   }
 };
 
 const getCachedSummary = () => cachedSummary;
 
-// 🔁 Summary endpoint
+// ===== SUMMARY ENDPOINT =====
 app.get("/api/summary", (req, res) => {
   const summary = getCachedSummary();
-  if (summary) {
-    res.json(summary);
-  } else {
-    res.json({
+
+  if (!summary) {
+    return res.json({
       pvEnergy: 0,
       pvTotal: 0,
       loadEnergy: 0,
@@ -83,17 +67,18 @@ app.get("/api/summary", (req, res) => {
       source: "empty",
     });
   }
+
+  res.json(summary);
 });
 
-// 🔗 route อื่น ๆ เช่น /api/hps/history หรือ /api/hps
+// ===== MOUNT ROUTES =====
 app.use("/api", hpsRoutes);
 
-// 🔁 เรียก fetch summary ทุก 6 นาที
+// ===== AUTO REFRESH SUMMARY =====
 fetchAndCacheSummary();
 setInterval(fetchAndCacheSummary, 6 * 60 * 1000);
 
-// ✅ เริ่มเซิร์ฟเวอร์
+// ===== START SERVER =====
 app.listen(PORT, () => {
-  const time = new Date().toISOString();
-  console.log(`[${time}] 🚀 Server running at http://localhost:${PORT}`);
+  log(`🚀 Server running at http://localhost:${PORT}`);
 });
