@@ -1,37 +1,31 @@
-// routes/index.js
 const express = require("express");
 const axios = require("axios");
 const dayjs = require("dayjs");
+
 const router = express.Router();
 
-// ---------------- CONFIG ----------------
 const BASE_URL = "https://www.enerclo-atesspower.com/api/v1";
 const AUTH_HEADER = {
   Authorization: "Basic MTcxOTpjOTAyNGVmMjA5ZWU0ZWFhOTgyYWQ2YWQ2NTQxZDlhYg==",
   "Accept-Language": "en",
 };
 
-const log = (...args) =>
+// ===================== UTIL =====================
+const log = (...args) => {
   console.log(`[${new Date().toISOString()}]`, ...args);
-
-// -------------- HELPERS ----------------
-const normalizeTime = (t) => {
-  if (!t) return Date.now();
-  const n = Number(t);
-  if (Number.isFinite(n)) {
-    if (n < 1e12) return n * 1000; // sec → ms
-    return n;
-  }
-  const d = new Date(t);
-  return isNaN(d.getTime()) ? Date.now() : d.getTime();
 };
 
-const num = (v) => {
+const toNumber = (v) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 };
 
-// ---------------- REALTIME FETCH ----------------
+const toTime = (t) => {
+  const d = dayjs(t);
+  return d.isValid() ? d.valueOf() : null;
+};
+
+// ===================== REALTIME =====================
 const fetchHpsData = async (deviceSn) => {
   try {
     const res = await axios.get(`${BASE_URL}/hps/data-last`, {
@@ -42,144 +36,116 @@ const fetchHpsData = async (deviceSn) => {
     return res.data?.data || {};
   } catch {
     try {
-      const fb = await axios.get(`${BASE_URL}/hps/data-last-small`, {
+      const res = await axios.get(`${BASE_URL}/hps/data-last-small`, {
         params: { deviceSn },
         headers: AUTH_HEADER,
         timeout: 10000,
       });
-      return fb.data?.data || {};
+      return res.data?.data || {};
     } catch (err) {
-      log("❌ REALTIME fetch failed:", err.message);
+      log("❌ realtime error:", err.message);
       return {};
     }
   }
 };
 
-// ---------------- HISTORY FETCH ----------------
-const extractPageDataFlexible = (res) => {
-  if (!res?.data) return [];
-  const d = res.data;
-  if (Array.isArray(d.datas)) return d.datas;
-  if (Array.isArray(d)) return d;
-  if (Array.isArray(d.list)) return d.list;
-  if (Array.isArray(d.items)) return d.items;
-
-  // Single object
-  if (
-    typeof d === "object" &&
-    (d.time || d.ppv || d.vpv || d.epv)
-  )
-    return [d];
-
-  return [];
-};
-
-const fetchHpsHistory = async (deviceSn, start, end, isStringType) => {
+// ===================== HISTORY =====================
+const fetchHpsHistory = async (deviceSn, startDate, endDate, isStringType) => {
   const endpoint = isStringType ? "hps/data-list-small" : "hps/data-list";
-  const all = [];
-  let pageNo = 1;
   const pageSize = 2000;
+  let pageNo = 1;
+  const all = [];
 
   try {
     while (true) {
       const res = await axios.get(`${BASE_URL}/${endpoint}`, {
-        params: { deviceSn, startDate: start, endDate: end, pageNo, pageSize },
+        params: { deviceSn, startDate, endDate, pageNo, pageSize },
         headers: AUTH_HEADER,
         timeout: 20000,
       });
 
-      const page = extractPageDataFlexible(res);
+      const rows = res.data?.data?.datas || [];
+      all.push(...rows);
 
-      if (page.length === 0) break;
-
-      all.push(...page);
-
-      if (page.length < pageSize) break;
-
+      if (rows.length < pageSize) break;
       pageNo++;
     }
+    return all;
   } catch (err) {
-    log("❌ HISTORY fetch failed:", err.message);
+    log("❌ history error:", err.message);
+    return [];
   }
-
-  return all;
 };
 
-// ----------- Unified realtime API ---------------
-router.all("/hps", async (req, res) => {
-  const deviceSn = req.query.deviceSn || "YKD0F1022A";
+// ===================== ROUTES =====================
 
-  try {
-    const d = await fetchHpsData(deviceSn);
+// ---------- REALTIME ----------
+router.get("/hps", async (req, res) => {
+  const deviceSn = req.query.deviceSn;
+  if (!deviceSn) return res.status(400).json({ error: "Missing deviceSn" });
 
-    const pvCurrent =
-      num(d.ipv) ||
-      num(d.ipva) + num(d.ipvb) + num(d.ipvc);
+  const d = await fetchHpsData(deviceSn);
 
-    return res.json({
-      pvPower: num(d.ppv1 || d.ppv),
-      pvVoltage: num(d.vpv),
-      pvCurrent,
-      pvEnergy: num(d.epvToday || d.epv),
-      time: normalizeTime(d.time),
-    });
-  } catch (err) {
-    return res.status(500).json({ error: "Realtime fetch failed" });
-  }
+  const pvCurrent =
+    toNumber(d.ipv) ||
+    toNumber(d.ipva) + toNumber(d.ipvb) + toNumber(d.ipvc);
+
+  res.json({
+    pvPower: toNumber(d.ppv1 || d.ppv),
+    pvVoltage: toNumber(d.vpv),
+    pvCurrent,
+  });
 });
 
-// -------------- HISTORY API ----------------
-router.all("/hps/history", async (req, res) => {
-  const deviceSn = req.query.deviceSn || "YKD0F1022A";
+// ---------- HISTORY ----------
+router.get("/hps/history", async (req, res) => {
+  const { deviceSn, type = "central", startDate, endDate } = req.query;
 
-  let start = req.query.startDate;
-  let end = req.query.endDate;
-  const type = req.query.type || "central";
-
-  if (!start || !end)
+  if (!deviceSn || !startDate || !endDate) {
     return res.status(400).json({
-      error: "Missing startDate or endDate",
-    });
-
-  start = dayjs(start).format("YYYY-MM-DD");
-  end = dayjs(end).format("YYYY-MM-DD");
-
-  const raw = await fetchHpsHistory(deviceSn, start, end, type === "string");
-
-  if (!raw || raw.length === 0) {
-    const rt = await fetchHpsData(deviceSn);
-    return res.json({
-      data: [
-        {
-          time: normalizeTime(rt.time),
-          pvPower: num(rt.ppv1 || rt.ppv),
-          pvVoltage: num(rt.vpv),
-          pvCurrent:
-            num(rt.ipv) +
-            num(rt.ipva) +
-            num(rt.ipvb) +
-            num(rt.ipvc),
-        },
-      ],
+      error: "Missing deviceSn / startDate / endDate",
     });
   }
 
-  const mapped = raw.map((d) => ({
-    time: normalizeTime(
-      d.time ||
-        d.datetime ||
-        d.recordTime ||
-        d.ts ||
-        d.date
-    ),
-    pvPower: num(d.ppv1 || d.ppv),
-    pvVoltage: num(d.vpv),
-    pvCurrent:
-      num(d.ipv) ||
-      num(d.ipva) + num(d.ipvb) + num(d.ipvc),
-  }));
+  const raw = await fetchHpsHistory(
+    deviceSn,
+    dayjs(startDate).format("YYYY-MM-DD"),
+    dayjs(endDate).format("YYYY-MM-DD"),
+    type === "string"
+  );
 
-  return res.json({ data: mapped });
+  const transformed = raw
+    .map((item) => {
+      const time = toTime(
+        item.time || item.recordTime || item.datetime || item.date
+      );
+      if (!time) return null;
+
+      return {
+        time,
+        pvPower: toNumber(item.ppv1 || item.ppv),
+        pvVoltage: toNumber(item.vpv),
+        pvCurrent:
+          toNumber(item.ipv) ||
+          toNumber(item.ipva) +
+            toNumber(item.ipvb) +
+            toNumber(item.ipvc),
+
+        // (เผื่อใช้ต่อ)
+        pvEnergy: toNumber(item.epvToday),
+        batCharge: toNumber(item.echargeToday),
+        batDischarge: toNumber(item.edischargeToday),
+        gridImport: toNumber(item.egridToday),
+        gridExport: toNumber(item.etoGridToday),
+        loadEnergy: toNumber(item.eloadToday),
+        outputFreq: toNumber(item.fac),
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.time - b.time);
+
+  // ⭐ สำคัญ: ส่ง data เสมอ
+  res.json({ data: transformed });
 });
 
 module.exports = router;
