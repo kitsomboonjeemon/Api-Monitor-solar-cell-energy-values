@@ -21,8 +21,26 @@ const toNumber = (v) => {
 };
 
 const toTime = (t) => {
-  const d = dayjs(t);
+  if (!t) return null;
+
+  // number (sec / ms)
+  if (typeof t === "number") {
+    return t < 1e12 ? t * 1000 : t;
+  }
+
+  // string
+  const d = dayjs(t.replace(" ", "T"));
   return d.isValid() ? d.valueOf() : null;
+};
+
+// ⭐ deviceSn helper (สำคัญมาก)
+const getDeviceSn = (req) => {
+  return (
+    req.query?.deviceSn ||
+    req.body?.deviceSn ||
+    process.env.DEFAULT_DEVICE_SN ||
+    "YKD0F1022A"
+  );
 };
 
 // ===================== REALTIME =====================
@@ -81,8 +99,10 @@ const fetchHpsHistory = async (deviceSn, startDate, endDate, isStringType) => {
 
 // ---------- REALTIME ----------
 router.get("/hps", async (req, res) => {
-  const deviceSn = req.query.deviceSn;
-  if (!deviceSn) return res.status(400).json({ error: "Missing deviceSn" });
+  const deviceSn = getDeviceSn(req);
+  if (!deviceSn) {
+    return res.status(400).json({ error: "Missing deviceSn" });
+  }
 
   const d = await fetchHpsData(deviceSn);
 
@@ -94,12 +114,14 @@ router.get("/hps", async (req, res) => {
     pvPower: toNumber(d.ppv1 || d.ppv),
     pvVoltage: toNumber(d.vpv),
     pvCurrent,
+    time: d.time || new Date().toISOString(),
   });
 });
 
 // ---------- HISTORY ----------
 router.get("/hps/history", async (req, res) => {
-  const { deviceSn, type = "central", startDate, endDate } = req.query;
+  const deviceSn = getDeviceSn(req);
+  const { type = "central", startDate, endDate } = req.query;
 
   if (!deviceSn || !startDate || !endDate) {
     return res.status(400).json({
@@ -117,7 +139,10 @@ router.get("/hps/history", async (req, res) => {
   const transformed = raw
     .map((item) => {
       const time = toTime(
-        item.time || item.recordTime || item.datetime || item.date
+        item.time ||
+          item.recordTime ||
+          item.datetime ||
+          item.date
       );
       if (!time) return null;
 
@@ -131,7 +156,7 @@ router.get("/hps/history", async (req, res) => {
             toNumber(item.ipvb) +
             toNumber(item.ipvc),
 
-        // (เผื่อใช้ต่อ)
+        // optional (ใช้ต่อได้)
         pvEnergy: toNumber(item.epvToday),
         batCharge: toNumber(item.echargeToday),
         batDischarge: toNumber(item.edischargeToday),
@@ -144,7 +169,7 @@ router.get("/hps/history", async (req, res) => {
     .filter(Boolean)
     .sort((a, b) => a.time - b.time);
 
-  // ⭐ สำคัญ: ส่ง data เสมอ
+  // ⭐ frontend ใช้ res.data.data
   res.json({ data: transformed });
 });
 
