@@ -1,8 +1,17 @@
 const sqlite3 = require("sqlite3").verbose();
 const path = require("path");
+const fs = require("fs");
+
+// path ไปยังโฟลเดอร์ data
+const dataDir = path.join(__dirname, "data");
+
+// ถ้าไม่มีโฟลเดอร์ data ให้สร้าง
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
 
 // path ไปยัง database
-const dbPath = path.join(__dirname, "data", "solar.db");
+const dbPath = path.join(dataDir, "solar.db");
 
 // connect db
 const db = new sqlite3.Database(dbPath, (err) => {
