@@ -20,6 +20,8 @@ app.use((req, res, next) => {
     const url = req.originalUrl || "";
 
     if (url.startsWith("/api/hps")) {
+      // 🔹 query
+      if (!req.query) req.query = {};
       if (!req.query.deviceSn) {
         req.query.deviceSn = DEFAULT_DEVICE_SN;
         if (process.env.NODE_ENV !== "production") {
@@ -30,6 +32,8 @@ app.use((req, res, next) => {
         }
       }
 
+      // 🔹 body (กัน undefined)
+      if (!req.body) req.body = {};
       if (!req.body.deviceSn) {
         req.body.deviceSn = DEFAULT_DEVICE_SN;
         if (process.env.NODE_ENV !== "production") {
