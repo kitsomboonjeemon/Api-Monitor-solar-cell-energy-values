@@ -12,7 +12,7 @@ const AUTH_HEADER = {
 
 // ===================== CACHE =====================
 let cacheData = [];
-let lastRecordTime = null;
+let lastRecordDate = null; // YYYY-MM-DD
 
 // ===================== UTIL =====================
 const toNumber = (v) => {
@@ -24,17 +24,17 @@ const getDeviceSn = (req) =>
   req.query.deviceSn || "YKD0F1022A";
 
 // ===================== FETCH FROM ATESS =====================
-async function fetchFromAtess(deviceSn, startTime, endTime) {
+async function fetchFromAtess(deviceSn, startDate, endDate) {
   const pageSize = 200;
   let pageNo = 1;
   const result = [];
 
   while (true) {
-    const r = await axios.get(`${BASE_URL}/hps/data-list-small`, {
+    const r = await axios.get(`${BASE_URL}/hps/data-list`, {
       params: {
         deviceSn,
-        startTime,
-        endTime,
+        startDate,
+        endDate,
         pageNo,
         pageSize,
       },
@@ -58,49 +58,52 @@ router.get("/hps/history", async (req, res) => {
 
   try {
     // 🟢 ครั้งแรก → ดึงย้อนหลังทั้งหมด
-    if (!lastRecordTime) {
-      const startTime = "2024-06-01 00:00:00"; // 🔴 เปลี่ยนเป็นวันติดตั้งจริง
-      const endTime = dayjs().format("YYYY-MM-DD HH:mm:ss");
+    if (!lastRecordDate) {
+      const startDate = "2024-06-01"; // 🔴 วันติดตั้งจริง
+      const endDate = dayjs().format("YYYY-MM-DD");
 
-      const rows = await fetchFromAtess(deviceSn, startTime, endTime);
+      const rows = await fetchFromAtess(deviceSn, startDate, endDate);
 
       cacheData = rows
         .map((d) => ({
-          time: dayjs(d.recordTime).valueOf(),
+          time: dayjs(d.time).valueOf(),
           pvPower: toNumber(d.ppv),
           pvVoltage: toNumber(d.vpv),
           pvCurrent: toNumber(d.ipv),
         }))
+        .filter((d) => d.time)
         .sort((a, b) => a.time - b.time);
 
-      if (cacheData.length > 0) {
-        lastRecordTime = dayjs(
-          cacheData[cacheData.length - 1].time
-        ).format("YYYY-MM-DD HH:mm:ss");
-      }
+      lastRecordDate = endDate;
 
       return res.json({ data: cacheData });
     }
 
-    // 🟡 ทุก 6 นาที → ดึงเฉพาะข้อมูลใหม่
-    const newRows = await fetchFromAtess(
-      deviceSn,
-      lastRecordTime,
-      dayjs().format("YYYY-MM-DD HH:mm:ss")
-    );
+    // 🟡 ทุกครั้งถัดมา → ดึงเฉพาะวันล่าสุด
+    const today = dayjs().format("YYYY-MM-DD");
 
-    const newData = newRows.map((d) => ({
-      time: dayjs(d.recordTime).valueOf(),
-      pvPower: toNumber(d.ppv),
-      pvVoltage: toNumber(d.vpv),
-      pvCurrent: toNumber(d.ipv),
-    }));
+    if (today !== lastRecordDate) {
+      const rows = await fetchFromAtess(
+        deviceSn,
+        lastRecordDate,
+        today
+      );
 
-    if (newData.length > 0) {
-      cacheData.push(...newData);
-      lastRecordTime = dayjs(
-        newData[newData.length - 1].time
-      ).format("YYYY-MM-DD HH:mm:ss");
+      const newData = rows
+        .map((d) => ({
+          time: dayjs(d.time).valueOf(),
+          pvPower: toNumber(d.ppv),
+          pvVoltage: toNumber(d.vpv),
+          pvCurrent: toNumber(d.ipv),
+        }))
+        .filter((d) => d.time);
+
+      if (newData.length > 0) {
+        cacheData.push(...newData);
+        cacheData.sort((a, b) => a.time - b.time);
+      }
+
+      lastRecordDate = today;
     }
 
     res.json({ data: cacheData });
