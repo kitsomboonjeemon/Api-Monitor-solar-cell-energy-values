@@ -23,7 +23,6 @@ const toNumber = (v) => {
 const toTime = (t) => {
   if (!t) return null;
   if (typeof t === "number") return t < 1e12 ? t * 1000 : t;
-
   const d = dayjs(t.replace(" ", "T"));
   return d.isValid() ? d.valueOf() : null;
 };
@@ -48,9 +47,9 @@ router.get("/hps", async (req, res) => {
     const d = r.data?.data || {};
 
     res.json({
-      pvPower: toNumber(d.pvPower ?? d.ppv),
-      pvVoltage: toNumber(d.pvVoltage ?? d.vpv),
-      pvCurrent: toNumber(d.pvCurrent ?? d.ipv),
+      pvPower: toNumber(d.ppv),
+      pvVoltage: toNumber(d.vpv),
+      pvCurrent: toNumber(d.ipv),
       time: d.recordTime || d.time || new Date().toISOString(),
     });
   } catch (err) {
@@ -59,42 +58,24 @@ router.get("/hps", async (req, res) => {
   }
 });
 
-// ===================== HISTORY FETCH =====================
+// ===================== HISTORY (PV GRAPH – REAL ATESS) =====================
 const fetchPvHistory = async (deviceSn, startDate, endDate) => {
-  const pageSize = 200;
-  let pageNo = 1;
-  const all = [];
-
-  // ⭐ สำคัญมาก (Atess UI ใช้)
-  const startTime = `${startDate} 00:00:00`;
-  const endTime = `${endDate} 23:59:59`;
-
   try {
-    while (true) {
-      const res = await axios.get(`${BASE_URL}/hps/data-list-small`, {
-        params: {
-          deviceSn,
-          startDate,
-          endDate,
-          startTime,
-          endTime,
-          pageNo,
-          pageSize,
-        },
-        headers: AUTH_HEADER,
-        timeout: 20000,
-      });
+    const res = await axios.get(`${BASE_URL}/hps/data-chart`, {
+      params: {
+        deviceSn,
+        startDate,
+        endDate,
+        type: "pv",          // ⭐ สำคัญ
+        timeType: "minute",  // หรือ "hour"
+      },
+      headers: AUTH_HEADER,
+      timeout: 20000,
+    });
 
-      const rows = res.data?.data?.datas || [];
-      all.push(...rows);
-
-      if (rows.length < pageSize) break;
-      pageNo++;
-    }
-
-    return all;
+    return res.data?.data || [];
   } catch (err) {
-    log("❌ history error:", err.message);
+    log("❌ data-chart error:", err.message);
     return [];
   }
 };
@@ -118,14 +99,14 @@ router.get("/hps/history", async (req, res) => {
 
   const transformed = raw
     .map((item) => {
-      const time = toTime(item.recordTime || item.time);
+      const time = toTime(item.time || item.collectTime);
       if (!time) return null;
 
       return {
         time,
-        pvPower: toNumber(item.pvPower),
-        pvVoltage: toNumber(item.pvVoltage),
-        pvCurrent: toNumber(item.pvCurrent),
+        pvPower: toNumber(item.power),
+        pvVoltage: toNumber(item.voltage),
+        pvCurrent: toNumber(item.current),
       };
     })
     .filter(Boolean)
