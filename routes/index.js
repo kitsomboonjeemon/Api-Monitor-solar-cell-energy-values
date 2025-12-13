@@ -25,9 +25,14 @@ const toTime = (t) => {
 const getDeviceSn = (req) =>
   req.query.deviceSn || "YKD0F1022A";
 
-// ===================== HISTORY (ALL PV DATA) =====================
+// ===================== HISTORY (PV GRAPH) =====================
 router.get("/hps/history", async (req, res) => {
   const deviceSn = getDeviceSn(req);
+
+  // ⭐ สำคัญที่สุด: Atess ต้องการวันที่
+  const startDate = req.query.startDate || dayjs().format("YYYY-MM-DD");
+  const endDate   = req.query.endDate   || startDate;
+
   const pageSize = 200;
   let pageNo = 1;
   const all = [];
@@ -37,6 +42,8 @@ router.get("/hps/history", async (req, res) => {
       const r = await axios.get(`${BASE_URL}/hps/data-list-small`, {
         params: {
           deviceSn,
+          startDate,
+          endDate,
           pageNo,
           pageSize,
         },
@@ -58,9 +65,9 @@ router.get("/hps/history", async (req, res) => {
 
         return {
           time,
-          pvPower: toNumber(item.ppv), // ⭐ ของจริง
-          pvVoltage: toNumber(item.vpv),
-          pvCurrent: toNumber(item.ipv),
+          pvPower: toNumber(item.ppv),   // PV power (kW)
+          pvVoltage: toNumber(item.vpv), // PV voltage (V)
+          pvCurrent: toNumber(item.ipv), // PV current (A)
         };
       })
       .filter(Boolean)
