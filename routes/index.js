@@ -23,6 +23,7 @@ const toNumber = (v) => {
 const toTime = (t) => {
   if (!t) return null;
   if (typeof t === "number") return t < 1e12 ? t * 1000 : t;
+
   const d = dayjs(t.replace(" ", "T"));
   return d.isValid() ? d.valueOf() : null;
 };
@@ -58,11 +59,15 @@ router.get("/hps", async (req, res) => {
   }
 });
 
-// ===================== HISTORY (เหมือนหน้า Atess) =====================
+// ===================== HISTORY FETCH =====================
 const fetchPvHistory = async (deviceSn, startDate, endDate) => {
   const pageSize = 200;
   let pageNo = 1;
   const all = [];
+
+  // ⭐ สำคัญมาก (Atess UI ใช้)
+  const startTime = `${startDate} 00:00:00`;
+  const endTime = `${endDate} 23:59:59`;
 
   try {
     while (true) {
@@ -71,6 +76,8 @@ const fetchPvHistory = async (deviceSn, startDate, endDate) => {
           deviceSn,
           startDate,
           endDate,
+          startTime,
+          endTime,
           pageNo,
           pageSize,
         },
@@ -116,7 +123,7 @@ router.get("/hps/history", async (req, res) => {
 
       return {
         time,
-        pvPower: toNumber(item.pvPower),       // ⭐ ตรงกับ Atess UI
+        pvPower: toNumber(item.pvPower),
         pvVoltage: toNumber(item.pvVoltage),
         pvCurrent: toNumber(item.pvCurrent),
       };
