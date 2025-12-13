@@ -33,6 +33,7 @@ const getDeviceSn = (req) =>
   process.env.DEFAULT_DEVICE_SN ||
   "YKD0F1022A";
 
+
 // ===================== REALTIME =====================
 router.get("/hps", async (req, res) => {
   const deviceSn = getDeviceSn(req);
@@ -58,27 +59,41 @@ router.get("/hps", async (req, res) => {
   }
 });
 
-// ===================== HISTORY (PV GRAPH – REAL ATESS) =====================
-const fetchPvHistory = async (deviceSn, startDate, endDate) => {
-  try {
-    const res = await axios.get(`${BASE_URL}/hps/data-chart`, {
-      params: {
-        deviceSn,
-        startDate,
-        endDate,
-        type: "pv",          // ⭐ สำคัญ
-        timeType: "minute",  // หรือ "hour"
-      },
-      headers: AUTH_HEADER,
-      timeout: 20000,
-    });
 
-    return res.data?.data || [];
+// ===================== HISTORY FETCH (CORRECT) =====================
+const fetchPvHistory = async (deviceSn, startDate, endDate) => {
+  const pageSize = 200;
+  let pageNo = 1;
+  const all = [];
+
+  try {
+    while (true) {
+      const res = await axios.get(`${BASE_URL}/hps/data-list-small`, {
+        params: {
+          deviceSn,
+          startDate,
+          endDate,
+          pageNo,
+          pageSize,
+        },
+        headers: AUTH_HEADER,
+        timeout: 20000,
+      });
+
+      const rows = res.data?.data?.datas || [];
+      all.push(...rows);
+
+      if (rows.length < pageSize) break;
+      pageNo++;
+    }
+
+    return all;
   } catch (err) {
-    log("❌ data-chart error:", err.message);
+    log("❌ history error:", err.message);
     return [];
   }
 };
+
 
 // ===================== HISTORY ROUTE =====================
 router.get("/hps/history", async (req, res) => {
@@ -93,20 +108,20 @@ router.get("/hps/history", async (req, res) => {
 
   const raw = await fetchPvHistory(
     deviceSn,
-    dayjs(startDate).format("YYYY-MM-DD"),
-    dayjs(endDate).format("YYYY-MM-DD")
+    startDate,
+    endDate
   );
 
   const transformed = raw
     .map((item) => {
-      const time = toTime(item.time || item.collectTime);
+      const time = toTime(item.recordTime || item.time);
       if (!time) return null;
 
       return {
         time,
-        pvPower: toNumber(item.power),
-        pvVoltage: toNumber(item.voltage),
-        pvCurrent: toNumber(item.current),
+        pvPower: toNumber(item.ppv),
+        pvVoltage: toNumber(item.vpv),
+        pvCurrent: toNumber(item.ipv),
       };
     })
     .filter(Boolean)
