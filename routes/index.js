@@ -38,7 +38,7 @@ router.get("/hps", async (req, res) => {
   const deviceSn = getDeviceSn(req);
 
   try {
-    const r = await axios.get(`${BASE_URL}/hps/data-last`, {
+    const r = await axios.get(`${BASE_URL}/hps/data-last-small`, {
       params: { deviceSn },
       headers: AUTH_HEADER,
       timeout: 10000,
@@ -47,12 +47,10 @@ router.get("/hps", async (req, res) => {
     const d = r.data?.data || {};
 
     res.json({
-      pvPower: toNumber(d.ppv1 || d.ppv),
-      pvVoltage: toNumber(d.vpv),
-      pvCurrent:
-        toNumber(d.ipv) ||
-        toNumber(d.ipva) + toNumber(d.ipvb) + toNumber(d.ipvc),
-      time: d.time || new Date().toISOString(),
+      pvPower: toNumber(d.pvPower ?? d.ppv),
+      pvVoltage: toNumber(d.pvVoltage ?? d.vpv),
+      pvCurrent: toNumber(d.pvCurrent ?? d.ipv),
+      time: d.recordTime || d.time || new Date().toISOString(),
     });
   } catch (err) {
     log("❌ realtime error:", err.message);
@@ -60,24 +58,36 @@ router.get("/hps", async (req, res) => {
   }
 });
 
-// ===================== HISTORY (PV GRAPH) =====================
+// ===================== HISTORY (เหมือนหน้า Atess) =====================
 const fetchPvHistory = async (deviceSn, startDate, endDate) => {
-  try {
-    const res = await axios.get(`${BASE_URL}/hps/data-chart`, {
-      params: {
-        deviceSn,
-        startDate,
-        endDate,
-        type: "pv",        // ⭐ PV time-series
-        timeType: "hour",  // หรือ "minute"
-      },
-      headers: AUTH_HEADER,
-      timeout: 20000,
-    });
+  const pageSize = 200;
+  let pageNo = 1;
+  const all = [];
 
-    return res.data?.data || [];
+  try {
+    while (true) {
+      const res = await axios.get(`${BASE_URL}/hps/data-list-small`, {
+        params: {
+          deviceSn,
+          startDate,
+          endDate,
+          pageNo,
+          pageSize,
+        },
+        headers: AUTH_HEADER,
+        timeout: 20000,
+      });
+
+      const rows = res.data?.data?.datas || [];
+      all.push(...rows);
+
+      if (rows.length < pageSize) break;
+      pageNo++;
+    }
+
+    return all;
   } catch (err) {
-    log("❌ data-chart error:", err.message);
+    log("❌ history error:", err.message);
     return [];
   }
 };
@@ -101,14 +111,14 @@ router.get("/hps/history", async (req, res) => {
 
   const transformed = raw
     .map((item) => {
-      const time = toTime(item.time || item.collectTime);
+      const time = toTime(item.recordTime || item.time);
       if (!time) return null;
 
       return {
         time,
-        pvPower: toNumber(item.power),
-        pvVoltage: toNumber(item.voltage),
-        pvCurrent: toNumber(item.current),
+        pvPower: toNumber(item.pvPower),       // ⭐ ตรงกับ Atess UI
+        pvVoltage: toNumber(item.pvVoltage),
+        pvCurrent: toNumber(item.pvCurrent),
       };
     })
     .filter(Boolean)
