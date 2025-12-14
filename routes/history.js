@@ -5,7 +5,7 @@ const db = require("../db");
 // =====================
 // PV HISTORY (SQLite)
 // =====================
-router.get("/hps/history", (req, res) => {
+router.get("/history", (req, res) => {
   console.log("🔥 HIT /api/hps/history");
 
   const sql = `
@@ -24,10 +24,10 @@ router.get("/hps/history", (req, res) => {
       return res.status(500).json({ data: [] });
     }
 
-    console.log("📊 rows length:", rows?.length);
+    console.log("📊 rows length:", rows.length);
 
     res.json({
-      data: Array.isArray(rows) ? rows : [],
+      data: rows, // rows เป็น array อยู่แล้ว
     });
   });
 });
