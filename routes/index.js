@@ -1,30 +1,36 @@
 const express = require("express");
-const dayjs = require("dayjs");
 const router = express.Router();
+const db = require("../db");
 
-const db = require("../db"); // 🔴 SQLite ที่เราสร้างไว้แล้ว
-
-// ===================== HISTORY API =====================
-// คืนข้อมูล PV Power / Voltage / Current ย้อนหลังทั้งหมด
+// ================= PV HISTORY (SQLite) =================
 router.get("/hps/history", (req, res) => {
-  try {
-    const rows = db
-      .prepare(`
-        SELECT
-          time,
-          pvPower,
-          pvVoltage,
-          pvCurrent
-        FROM pv_history
-        ORDER BY time ASC
-      `)
-      .all();
+  const { startDate, endDate } = req.query;
 
-    res.json({ data: rows });
-  } catch (err) {
-    console.error("❌ history error:", err.message);
-    res.json({ data: [] });
+  if (!startDate || !endDate) {
+    return res.json({ data: [] });
   }
+
+  const start = new Date(startDate).getTime();
+  const end = new Date(endDate).getTime() + 24 * 60 * 60 * 1000;
+
+  const sql = `
+    SELECT
+      time,
+      pvPower,
+      pvVoltage,
+      pvCurrent
+    FROM pv_history
+    WHERE time BETWEEN ? AND ?
+    ORDER BY time ASC
+  `;
+
+  db.all(sql, [start, end], (err, rows) => {
+    if (err) {
+      console.error("❌ pv_history error:", err.message);
+      return res.status(500).json({ data: [] });
+    }
+    res.json({ data: rows });
+  });
 });
 
 module.exports = router;
