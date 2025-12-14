@@ -6,6 +6,8 @@ const db = require("../db");
 // PV HISTORY (SQLite)
 // =====================
 router.get("/hps/history", (req, res) => {
+  console.log("🔥 HIT /api/hps/history");
+
   const sql = `
     SELECT
       time,
@@ -22,8 +24,10 @@ router.get("/hps/history", (req, res) => {
       return res.status(500).json({ data: [] });
     }
 
-    // 🔴 จุดสำคัญ: ต้องเป็น array เสมอ
-    res.json({ data: rows || [] });
+    // ✅ บังคับให้เป็น array เสมอ
+    res.json({
+      data: Array.isArray(rows) ? rows : [],
+    });
   });
 });
 
