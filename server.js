@@ -1,7 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 
-const { fetchRealtimeSummary } = require("./routes/atessService");
+const { fetchRealtimeData } = require("./routes/atessService");
 const hpsRoutes = require("./routes/index");
 
 const app = express();
@@ -9,18 +9,23 @@ const PORT = 3001;
 
 app.use(cors());
 
+// ===== SUMMARY CACHE =====
 let cachedSummary = null;
-const DEVICE_SN = "YKD0F1022A";
 
 const fetchAndCacheSummary = async () => {
-  const data = await fetchRealtimeSummary(DEVICE_SN);
-  if (data) cachedSummary = data;
+  try {
+    const data = await fetchRealtimeData();
+    if (data) cachedSummary = data;
+  } catch (err) {
+    console.error("❌ fetchAndCacheSummary error:", err.message);
+  }
 };
 
-
+// init + refresh every 6 minutes
 fetchAndCacheSummary();
 setInterval(fetchAndCacheSummary, 6 * 60 * 1000);
 
+// ===== API =====
 app.get("/api/summary", (req, res) => {
   res.json(
     cachedSummary || {
