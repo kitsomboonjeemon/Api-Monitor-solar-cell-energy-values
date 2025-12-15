@@ -21,7 +21,7 @@ const log = (...args) => {
 
 const safeParse = (val) => {
   const parsed = parseFloat(val);
-  return isNaN(parsed) ? 0 : parsed;
+  return Number.isFinite(parsed) ? parsed : 0;
 };
 
 const estimateIrradiance = (
@@ -29,6 +29,7 @@ const estimateIrradiance = (
   totalArea = 50 * 2.85,
   efficiency = 0.2
 ) => {
+  if (!pvPowerKw) return 0;
   return parseFloat(
     ((pvPowerKw * 1000) / (totalArea * efficiency)).toFixed(2)
   );
@@ -76,12 +77,15 @@ const fetchRealtimeData = async () => {
 
     if (!data) return null;
 
-    const pvPower = safeParse(data.ppv1);
-    const pvEnergy = safeParse(data.epvToday);
+    // ===== 🔴 FIX จุดสำคัญ =====
+    const pvPower = safeParse(data.ppv);          // ✅ FIX (เดิม ppv1)
+    const pvEnergy = safeParse(data.ePvToday);    // ✅ FIX (เดิม epvToday)
+
     const weather = await fetchWeather();
 
     return {
       timestamp: data.time || new Date().toISOString(),
+
       pvPower,
       pvVoltage: safeParse(data.vpv),
       pvCurrent:
@@ -89,16 +93,25 @@ const fetchRealtimeData = async () => {
         safeParse(data.ipva) +
           safeParse(data.ipvb) +
           safeParse(data.ipvc),
+
       pvEnergy,
-      batCharge: safeParse(data.echargeToday),
-      batDischarge: safeParse(data.edischargeToday),
-      gridImport: safeParse(data.egridToday),
-      gridExport: safeParse(data.etoGridToday),
-      loadEnergy: safeParse(data.eloadToday),
-      outputFreq: safeParse(data.fac),
+
+      // ===== 🔴 FIX field energy =====
+      batCharge: safeParse(data.eBatChargeToday),       // ✅ FIX
+      batDischarge: safeParse(data.eBatDischargeToday), // ✅ FIX
+
+      gridImport: safeParse(data.eGridInToday),         // ✅ FIX
+      gridExport: safeParse(data.eGridOutToday),        // ✅ FIX
+
+      loadEnergy: safeParse(data.eLoadToday),           // ✅ FIX
+
+      outputFreq: safeParse(data.outFreq),              // ✅ FIX (เดิม fac)
+
       co2Reduced: pvEnergy * 0.9,
       ktoe: pvEnergy / 11630,
+
       irradiance: estimateIrradiance(pvPower),
+
       backplaneTemp:
         weather.ambientTemp !== null
           ? Math.min(weather.ambientTemp + pvPower * 3, 80)
