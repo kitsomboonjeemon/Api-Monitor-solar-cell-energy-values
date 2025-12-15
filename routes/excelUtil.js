@@ -5,7 +5,8 @@ const fetch = require("node-fetch");
 const DEVICE_SN = "YKD0F1022A";
 const BASE_URL = "https://www.enerclo-atesspower.com/api/v1";
 const AUTH_HEADER = {
-  Authorization: "Basic MTcxOTpjOTAyNGVmMjA5ZWU0ZWFhOTgyYWQ2YWQ2NTQxZDlhYg==",
+  Authorization:
+    "Basic MTcxOTpjOTAyNGVmMjA5ZWU0ZWFhOTgyYWQ2YWQ2NTQxZDlhYg==",
   "Accept-Language": "en",
 };
 
@@ -20,8 +21,8 @@ const log = (...args) => {
 };
 
 const safeParse = (val) => {
-  const parsed = parseFloat(val);
-  return Number.isFinite(parsed) ? parsed : 0;
+  const n = parseFloat(val);
+  return Number.isFinite(n) ? n : 0;
 };
 
 const estimateIrradiance = (
@@ -30,11 +31,12 @@ const estimateIrradiance = (
   efficiency = 0.2
 ) => {
   if (!pvPowerKw) return 0;
-  return parseFloat(
+  return Number(
     ((pvPowerKw * 1000) / (totalArea * efficiency)).toFixed(2)
   );
 };
 
+// ========== WEATHER ==========
 const fetchWeather = async () => {
   try {
     const url = `https://api.openweathermap.org/data/2.5/weather?lat=${LAT}&lon=${LON}&appid=${OPENWEATHER_API_KEY}&units=metric`;
@@ -43,16 +45,10 @@ const fetchWeather = async () => {
 
     return {
       ambientTemp: data.main?.temp ?? null,
-      humidity: data.main?.humidity ?? null,
-      windSpeed: data.wind?.speed ?? null,
     };
   } catch (err) {
     log("❌ Weather API failed:", err.message);
-    return {
-      ambientTemp: null,
-      humidity: null,
-      windSpeed: null,
-    };
+    return { ambientTemp: null };
   }
 };
 
@@ -65,28 +61,37 @@ const fetchRealtimeData = async () => {
       const res = await axios.get(`${BASE_URL}/hps/data-last`, {
         params: { deviceSn: DEVICE_SN },
         headers: AUTH_HEADER,
+        timeout: 10000,
       });
       data = res.data?.data;
     } catch {
       const fallback = await axios.get(`${BASE_URL}/hps/data-last-small`, {
         params: { deviceSn: DEVICE_SN },
         headers: AUTH_HEADER,
+        timeout: 10000,
       });
       data = fallback.data?.data;
     }
 
-    if (!data) return null;
+    if (!data) {
+      log("❌ No Atess data");
+      return null;
+    }
 
-    // ===== 🔴 FIX จุดสำคัญ =====
-    const pvPower = safeParse(data.ppv);          // ✅ FIX (เดิม ppv1)
-    const pvEnergy = safeParse(data.ePvToday);    // ✅ FIX (เดิม epvToday)
+    // ===== ✅ FIX สำคัญ =====
+    const pvPower =
+      safeParse(data.ppv) || safeParse(data.ppv1); // รองรับ 2 แบบ
+    const pvEnergy =
+      safeParse(data.ePvToday) || safeParse(data.epvToday);
 
     const weather = await fetchWeather();
 
     return {
       timestamp: data.time || new Date().toISOString(),
 
+      // ===== PV =====
       pvPower,
+      pvEnergy,
       pvVoltage: safeParse(data.vpv),
       pvCurrent:
         safeParse(data.ipv) ||
@@ -94,19 +99,35 @@ const fetchRealtimeData = async () => {
           safeParse(data.ipvb) +
           safeParse(data.ipvc),
 
-      pvEnergy,
+      // ===== Battery =====
+      batCharge:
+        safeParse(data.eBatChargeToday) ||
+        safeParse(data.echargeToday),
 
-      // ===== 🔴 FIX field energy =====
-      batCharge: safeParse(data.eBatChargeToday),       // ✅ FIX
-      batDischarge: safeParse(data.eBatDischargeToday), // ✅ FIX
+      batDischarge:
+        safeParse(data.eBatDischargeToday) ||
+        safeParse(data.edischargeToday),
 
-      gridImport: safeParse(data.eGridInToday),         // ✅ FIX
-      gridExport: safeParse(data.eGridOutToday),        // ✅ FIX
+      // ===== Grid =====
+      gridImport:
+        safeParse(data.eGridInToday) ||
+        safeParse(data.egridToday),
 
-      loadEnergy: safeParse(data.eLoadToday),           // ✅ FIX
+      gridExport:
+        safeParse(data.eGridOutToday) ||
+        safeParse(data.etoGridToday),
 
-      outputFreq: safeParse(data.outFreq),              // ✅ FIX (เดิม fac)
+      // ===== Load =====
+      loadEnergy:
+        safeParse(data.eLoadToday) ||
+        safeParse(data.eloadToday),
 
+      // ===== Inverter =====
+      outputFreq:
+        safeParse(data.outFreq) ||
+        safeParse(data.fac),
+
+      // ===== Social =====
       co2Reduced: pvEnergy * 0.9,
       ktoe: pvEnergy / 11630,
 
@@ -116,6 +137,8 @@ const fetchRealtimeData = async () => {
         weather.ambientTemp !== null
           ? Math.min(weather.ambientTemp + pvPower * 3, 80)
           : null,
+
+      source: "atess",
     };
   } catch (err) {
     log("❌ fetchRealtimeData error:", err.message);

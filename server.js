@@ -6,17 +6,16 @@ const PORT = 3001;
 
 app.use(cors());
 
-// routes อื่น ๆ (เช่น /api/hps/history)
+// routes อื่น (history / graph)
 const hpsRoutes = require("./routes/index");
 
-// ✅ import realtime fetcher
-const { fetchRealtimeData } = require("./services/fetchRealtimeData");
+// ✅ ดึงจาก excelUtil.js
+const { fetchRealtimeData } = require("./routes/excelUtil");
 
 // ================= SUMMARY CACHE =================
 let cachedSummary = null;
 let lastUpdated = null;
 
-// ดึงข้อมูลจาก Atess แล้ว cache
 const fetchAndCacheSummary = async () => {
   try {
     const data = await fetchRealtimeData();
