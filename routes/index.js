@@ -96,29 +96,24 @@ router.get("/hps/history", async (req, res) => {
 
     const transformed = rawData.map((item) => ({
       time: item.time,
-      pvPower: parseFloat(item.ppv1 || item.ppv || 0),
-      pvVoltage: parseFloat(item.vpv || 0),
-      pvCurrent: parseFloat(item.ipv || 0),
-      pvEnergy: parseFloat(item.epvToday || 0),
-      batCharge: parseFloat(item.echargeToday || 0),
-      batDischarge: parseFloat(item.edischargeToday || 0),
-      gridImport: parseFloat(item.egridToday || 0),
-      gridExport: parseFloat(item.etoGridToday || 0),
-      loadEnergy: parseFloat(item.eloadToday || 0),
-      outputFreq: parseFloat(item.fac || 0),
+      pvPower: Number(item.ppv1 || item.ppv || 0),
+      pvVoltage: Number(item.vpv || 0),
+      pvCurrent: Number(item.ipv || 0),
+      pvEnergy: Number(item.epvToday || 0),
+      batCharge: Number(item.echargeToday || 0),
+      batDischarge: Number(item.edischargeToday || 0),
+      gridImport: Number(item.egridToday || 0),
+      gridExport: Number(item.etoGridToday || 0),
+      loadEnergy: Number(item.eloadToday || 0),
+      outputFreq: Number(item.fac || 0),
     }));
 
-    if (transformed.length === 0) {
-      return res.status(204).json({
-        message: "No data available in this time range",
-      });
-    }
-
-    res.json({ data: transformed });
+    return res.json({ data: transformed });
   } catch (err) {
     log("❌ Failed to transform history:", err.message);
-    res.status(500).json({ error: "Failed to fetch historical data" });
+    return res.status(500).json({ error: "Failed to fetch historical data" });
   }
 });
+
 
 module.exports = router;
