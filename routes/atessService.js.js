@@ -5,8 +5,7 @@ const fetch = require("node-fetch");
 const DEVICE_SN = "YKD0F1022A";
 const BASE_URL = "https://www.enerclo-atesspower.com/api/v1";
 const AUTH_HEADER = {
-  Authorization:
-    "Basic MTcxOTpjOTAyNGVmMjA5ZWU0ZWFhOTgyYWQ2YWQ2NTQxZDlhYg==",
+  Authorization: "Basic MTcxOTpjOTAyNGVmMjA5ZWU0ZWFhOTgyYWQ2YWQ2NTQxZDlhYg==",
   "Accept-Language": "en",
 };
 
@@ -21,8 +20,8 @@ const log = (...args) => {
 };
 
 const safeParse = (val) => {
-  const n = parseFloat(val);
-  return Number.isFinite(n) ? n : 0;
+  const parsed = parseFloat(val);
+  return isNaN(parsed) ? 0 : parsed;
 };
 
 const estimateIrradiance = (
@@ -30,13 +29,11 @@ const estimateIrradiance = (
   totalArea = 50 * 2.85,
   efficiency = 0.2
 ) => {
-  if (!pvPowerKw) return 0;
-  return Number(
+  return parseFloat(
     ((pvPowerKw * 1000) / (totalArea * efficiency)).toFixed(2)
   );
 };
 
-// ========== WEATHER ==========
 const fetchWeather = async () => {
   try {
     const url = `https://api.openweathermap.org/data/2.5/weather?lat=${LAT}&lon=${LON}&appid=${OPENWEATHER_API_KEY}&units=metric`;
@@ -45,10 +42,16 @@ const fetchWeather = async () => {
 
     return {
       ambientTemp: data.main?.temp ?? null,
+      humidity: data.main?.humidity ?? null,
+      windSpeed: data.wind?.speed ?? null,
     };
   } catch (err) {
     log("❌ Weather API failed:", err.message);
-    return { ambientTemp: null };
+    return {
+      ambientTemp: null,
+      humidity: null,
+      windSpeed: null,
+    };
   }
 };
 
@@ -61,84 +64,45 @@ const fetchRealtimeData = async () => {
       const res = await axios.get(`${BASE_URL}/hps/data-last`, {
         params: { deviceSn: DEVICE_SN },
         headers: AUTH_HEADER,
-        timeout: 10000,
       });
       data = res.data?.data;
     } catch {
       const fallback = await axios.get(`${BASE_URL}/hps/data-last-small`, {
         params: { deviceSn: DEVICE_SN },
         headers: AUTH_HEADER,
-        timeout: 10000,
       });
       data = fallback.data?.data;
     }
 
-    if (!data) {
-      log("❌ No Atess data");
-      return null;
-    }
+    if (!data) return null;
 
-    // ===== ✅ FIX สำคัญ =====
-    const pvPower =
-      safeParse(data.ppv) || safeParse(data.ppv1); // รองรับ 2 แบบ
-    const pvEnergy =
-      safeParse(data.ePvToday) || safeParse(data.epvToday);
-
+    const pvPower = safeParse(data.ppv1);
+    const pvEnergy = safeParse(data.epvToday);
     const weather = await fetchWeather();
 
     return {
       timestamp: data.time || new Date().toISOString(),
-
-      // ===== PV =====
       pvPower,
-      pvEnergy,
       pvVoltage: safeParse(data.vpv),
       pvCurrent:
         safeParse(data.ipv) ||
         safeParse(data.ipva) +
           safeParse(data.ipvb) +
           safeParse(data.ipvc),
-
-      // ===== Battery =====
-      batCharge:
-        safeParse(data.eBatChargeToday) ||
-        safeParse(data.echargeToday),
-
-      batDischarge:
-        safeParse(data.eBatDischargeToday) ||
-        safeParse(data.edischargeToday),
-
-      // ===== Grid =====
-      gridImport:
-        safeParse(data.eGridInToday) ||
-        safeParse(data.egridToday),
-
-      gridExport:
-        safeParse(data.eGridOutToday) ||
-        safeParse(data.etoGridToday),
-
-      // ===== Load =====
-      loadEnergy:
-        safeParse(data.eLoadToday) ||
-        safeParse(data.eloadToday),
-
-      // ===== Inverter =====
-      outputFreq:
-        safeParse(data.outFreq) ||
-        safeParse(data.fac),
-
-      // ===== Social =====
+      pvEnergy,
+      batCharge: safeParse(data.echargeToday),
+      batDischarge: safeParse(data.edischargeToday),
+      gridImport: safeParse(data.egridToday),
+      gridExport: safeParse(data.etoGridToday),
+      loadEnergy: safeParse(data.eloadToday),
+      outputFreq: safeParse(data.fac),
       co2Reduced: pvEnergy * 0.9,
       ktoe: pvEnergy / 11630,
-
       irradiance: estimateIrradiance(pvPower),
-
       backplaneTemp:
         weather.ambientTemp !== null
           ? Math.min(weather.ambientTemp + pvPower * 3, 80)
           : null,
-
-      source: "atess",
     };
   } catch (err) {
     log("❌ fetchRealtimeData error:", err.message);
