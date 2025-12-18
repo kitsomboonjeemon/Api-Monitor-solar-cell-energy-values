@@ -6,20 +6,16 @@ const path = require("path");
 console.log("✅ exportRoutes loaded");
 
 const router = express.Router();
-
 const DATA_DIR = path.resolve(__dirname, "../data");
 const FILE_PATH = path.join(DATA_DIR, "solar_latest.xlsx");
 
-// ===== helper =====
-function normalizeTimestamp(ts) {
+function safeDate(ts) {
   if (!ts) return new Date();
-  const d = new Date(typeof ts === "string" ? ts.replace(" ", "T") : ts);
+  const d = new Date(String(ts).replace(" ", "T"));
   return isNaN(d.getTime()) ? new Date() : d;
 }
 
 router.get("/export/latest-excel", async (req, res) => {
-  console.log("📥 /api/export/latest-excel called");
-
   try {
     const summary = req.app.get("cachedSummary");
     if (!summary) {
@@ -36,8 +32,8 @@ router.get("/export/latest-excel", async (req, res) => {
       try {
         await wb.xlsx.readFile(FILE_PATH);
         ws = wb.getWorksheet("History");
-      } catch (err) {
-        console.warn("⚠️ Excel corrupted, deleting and recreating");
+      } catch {
+        // ไฟล์พัง → ลบทิ้ง แล้วเริ่มใหม่
         await fs.remove(FILE_PATH);
         ws = null;
       }
@@ -45,62 +41,54 @@ router.get("/export/latest-excel", async (req, res) => {
 
     // ===== create workbook/sheet once =====
     if (!ws) {
-      console.log("🆕 Creating new Excel workbook");
       ws = wb.addWorksheet("History");
       ws.columns = [
         { header: "Timestamp", key: "timestamp" },
-        { header: "PV Power (kW)", key: "pvPower" },
-        { header: "PV Voltage (V)", key: "pvVoltage" },
-        { header: "PV Current (A)", key: "pvCurrent" },
-        { header: "PV Energy Today (kWh)", key: "pvEnergy" },
-        { header: "Battery Charge (kWh)", key: "batCharge" },
-        { header: "Battery Discharge (kWh)", key: "batDischarge" },
-        { header: "Load Energy (kWh)", key: "loadEnergy" },
-        { header: "Grid Import (kWh)", key: "gridImport" },
-        { header: "Grid Export (kWh)", key: "gridExport" },
-        { header: "Output Frequency (Hz)", key: "outputFreq" },
-        { header: "Irradiance (W/m²)", key: "irradiance" },
-        { header: "CO₂ Reduced (kg)", key: "co2Reduced" },
+        { header: "PV Power", key: "pvPower" },
+        { header: "PV Voltage", key: "pvVoltage" },
+        { header: "PV Current", key: "pvCurrent" },
+        { header: "PV Energy", key: "pvEnergy" },
+        { header: "Battery Charge", key: "batCharge" },
+        { header: "Battery Discharge", key: "batDischarge" },
+        { header: "Load Energy", key: "loadEnergy" },
+        { header: "Grid Import", key: "gridImport" },
+        { header: "Grid Export", key: "gridExport" },
+        { header: "Output Freq", key: "outputFreq" },
+        { header: "Irradiance", key: "irradiance" },
+        { header: "CO2 Reduced", key: "co2Reduced" },
         { header: "KTOE", key: "ktoe" },
       ];
     }
 
-    // ===== timestamp =====
-    const ts = normalizeTimestamp(summary.timestamp);
-    const currentTs = ts.toISOString();
+    const ts = safeDate(summary.timestamp).toISOString();
 
-    const lastRow = ws.lastRow;
     const lastTs =
-      lastRow?.getCell(1)?.value &&
-      new Date(lastRow.getCell(1).value).toISOString();
+      ws.lastRow?.getCell(1)?.value &&
+      new Date(ws.lastRow.getCell(1).value).toISOString();
 
-    if (lastTs !== currentTs) {
+    if (lastTs !== ts) {
       ws.addRow({
-        timestamp: currentTs,
-        pvPower: summary.pvPower ?? 0,
-        pvVoltage: summary.pvVoltage ?? 0,
-        pvCurrent: summary.pvCurrent ?? 0,
-        pvEnergy: summary.pvEnergy ?? 0,
-        batCharge: summary.batCharge ?? 0,
-        batDischarge: summary.batDischarge ?? 0,
-        loadEnergy: summary.loadEnergy ?? 0,
-        gridImport: summary.gridImport ?? 0,
-        gridExport: summary.gridExport ?? 0,
-        outputFreq: summary.outputFreq ?? 0,
-        irradiance: summary.irradiance ?? 0,
-        co2Reduced: summary.co2Reduced ?? 0,
-        ktoe: summary.ktoe ?? 0,
+        timestamp: ts,
+        pvPower: Number(summary.pvPower) || 0,
+        pvVoltage: Number(summary.pvVoltage) || 0,
+        pvCurrent: Number(summary.pvCurrent) || 0,
+        pvEnergy: Number(summary.pvEnergy) || 0,
+        batCharge: Number(summary.batCharge) || 0,
+        batDischarge: Number(summary.batDischarge) || 0,
+        loadEnergy: Number(summary.loadEnergy) || 0,
+        gridImport: Number(summary.gridImport) || 0,
+        gridExport: Number(summary.gridExport) || 0,
+        outputFreq: Number(summary.outputFreq) || 0,
+        irradiance: Number(summary.irradiance) || 0,
+        co2Reduced: Number(summary.co2Reduced) || 0,
+        ktoe: Number(summary.ktoe) || 0,
       });
-
-      console.log("➕ Row appended:", currentTs);
-    } else {
-      console.log("⏭️ Duplicate timestamp, skipped");
     }
 
     await wb.xlsx.writeFile(FILE_PATH);
     res.download(FILE_PATH, "solar_latest.xlsx");
   } catch (err) {
-    console.error("❌ Export error:", err);
+    console.error("❌ EXPORT FAILED:", err);
     res.status(500).json({ error: "Export failed" });
   }
 });
