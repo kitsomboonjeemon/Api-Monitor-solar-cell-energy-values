@@ -17,6 +17,7 @@
     "dotenv": "^17.1.0",
     "exceljs": "^4.4.0",
     "express": "^5.1.0",
+    "fs-extra": "^11.3.2",
     "node-cron": "^4.2.1",
     "node-fetch": "^2.7.0",
     "sqlite3": "^5.1.7",

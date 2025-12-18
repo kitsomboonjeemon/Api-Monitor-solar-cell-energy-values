@@ -3,6 +3,7 @@ const cors = require("cors");
 
 const { fetchRealtimeData } = require("./routes/atessService");
 const hpsRoutes = require("./routes/index");
+const exportRoutes = require("./routes/export");
 
 const app = express();
 const PORT = 3001;
@@ -12,10 +13,18 @@ app.use(cors());
 // ===== SUMMARY CACHE =====
 let cachedSummary = null;
 
+// ⭐ เพิ่มบรรทัดนี้
+app.set("cachedSummary", null);
+
 const fetchAndCacheSummary = async () => {
   try {
     const data = await fetchRealtimeData();
-    if (data) cachedSummary = data;
+    if (data) {
+      cachedSummary = data;
+
+      // ⭐ สำคัญมาก
+      app.set("cachedSummary", data);
+    }
   } catch (err) {
     console.error("❌ fetchAndCacheSummary error:", err.message);
   }
@@ -41,6 +50,7 @@ app.get("/api/summary", (req, res) => {
   );
 });
 
+app.use("/api", exportRoutes);
 app.use("/api", hpsRoutes);
 
 app.listen(PORT, () => {
