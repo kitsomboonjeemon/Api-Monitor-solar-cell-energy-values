@@ -3,15 +3,22 @@ const ExcelJS = require("exceljs");
 const fs = require("fs-extra");
 const path = require("path");
 
+// 🔥 LOG พิสูจน์ว่าไฟล์นี้ถูกโหลดจริง
+console.log("✅ exportRoutes loaded");
+
 const router = express.Router();
 
 const DATA_DIR = path.resolve(__dirname, "../data");
 const FILE_PATH = path.join(DATA_DIR, "solar_latest.xlsx");
 
 router.get("/export/latest-excel", async (req, res) => {
+  console.log("📥 /api/export/latest-excel called");
+
   try {
     const summary = req.app.get("cachedSummary");
+
     if (!summary) {
+      console.log("⚠️ Summary not ready");
       return res.status(503).json({ error: "Summary not ready" });
     }
 
@@ -24,11 +31,12 @@ router.get("/export/latest-excel", async (req, res) => {
       await wb.xlsx.readFile(FILE_PATH);
       ws = wb.getWorksheet("History");
 
-      // ⭐ fallback ถ้า sheet หาย
       if (!ws) {
+        console.log("⚠️ History sheet missing, recreating");
         ws = wb.addWorksheet("History");
       }
     } else {
+      console.log("🆕 Creating new Excel file");
       ws = wb.addWorksheet("History");
       ws.columns = [
         { header: "Timestamp", key: "timestamp" },
@@ -48,7 +56,7 @@ router.get("/export/latest-excel", async (req, res) => {
       ];
     }
 
-    // ===== ป้องกัน timestamp ซ้ำ (normalize) =====
+    // ===== ป้องกัน timestamp ซ้ำ =====
     const lastRow = ws.lastRow;
     const lastTimestamp = lastRow?.getCell(1)?.value;
     const lastTsStr = lastTimestamp
@@ -74,12 +82,18 @@ router.get("/export/latest-excel", async (req, res) => {
         co2Reduced: summary.co2Reduced,
         ktoe: summary.ktoe,
       });
+
+      console.log("➕ Row appended:", summary.timestamp);
+    } else {
+      console.log("⏭️ Duplicate timestamp, skip append");
     }
 
     await wb.xlsx.writeFile(FILE_PATH);
+
+    console.log("📤 Sending Excel:", FILE_PATH);
     res.download(FILE_PATH, "solar_latest.xlsx");
   } catch (err) {
-    console.error("❌ Export error:", err.message);
+    console.error("❌ Export error:", err);
     res.status(500).json({ error: "Export failed" });
   }
 });
