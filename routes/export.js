@@ -3,13 +3,30 @@ const ExcelJS = require("exceljs");
 const fs = require("fs-extra");
 const path = require("path");
 
-// 🔥 LOG พิสูจน์ว่าไฟล์นี้ถูกโหลดจริง
+// LOG พิสูจน์ว่าไฟล์นี้ถูกโหลดจริง
 console.log("✅ exportRoutes loaded");
 
 const router = express.Router();
 
 const DATA_DIR = path.resolve(__dirname, "../data");
 const FILE_PATH = path.join(DATA_DIR, "solar_latest.xlsx");
+
+// ===== helper: safe timestamp =====
+function normalizeTimestamp(ts) {
+  if (!ts) return new Date();
+
+  // รองรับ "YYYY-MM-DD HH:mm:ss"
+  const d = new Date(
+    typeof ts === "string" ? ts.replace(" ", "T") : ts
+  );
+
+  if (isNaN(d.getTime())) {
+    console.warn("⚠️ Invalid timestamp, fallback to now:", ts);
+    return new Date();
+  }
+
+  return d;
+}
 
 router.get("/export/latest-excel", async (req, res) => {
   console.log("📥 /api/export/latest-excel called");
@@ -27,16 +44,19 @@ router.get("/export/latest-excel", async (req, res) => {
     const wb = new ExcelJS.Workbook();
     let ws;
 
+    // ===== load or create workbook =====
     if (fs.existsSync(FILE_PATH)) {
-      await wb.xlsx.readFile(FILE_PATH);
-      ws = wb.getWorksheet("History");
-
-      if (!ws) {
-        console.log("⚠️ History sheet missing, recreating");
-        ws = wb.addWorksheet("History");
+      try {
+        await wb.xlsx.readFile(FILE_PATH);
+        ws = wb.getWorksheet("History");
+      } catch (e) {
+        console.warn("⚠️ Excel corrupted, recreating");
+        ws = null;
       }
-    } else {
-      console.log("🆕 Creating new Excel file");
+    }
+
+    if (!ws) {
+      console.log("🆕 Creating new Excel file / sheet");
       ws = wb.addWorksheet("History");
       ws.columns = [
         { header: "Timestamp", key: "timestamp" },
@@ -56,34 +76,35 @@ router.get("/export/latest-excel", async (req, res) => {
       ];
     }
 
-    // ===== ป้องกัน timestamp ซ้ำ =====
-    const lastRow = ws.lastRow;
-    const lastTimestamp = lastRow?.getCell(1)?.value;
-    const lastTsStr = lastTimestamp
-      ? new Date(lastTimestamp).toISOString()
-      : null;
+    // ===== timestamp normalize =====
+    const ts = normalizeTimestamp(summary.timestamp);
+    const currentTsStr = ts.toISOString();
 
-    const currentTsStr = new Date(summary.timestamp).toISOString();
+    // ===== duplicate guard =====
+    const lastRow = ws.lastRow;
+    const lastTsStr = lastRow?.getCell(1)?.value
+      ? new Date(lastRow.getCell(1).value).toISOString()
+      : null;
 
     if (lastTsStr !== currentTsStr) {
       ws.addRow({
-        timestamp: summary.timestamp,
-        pvPower: summary.pvPower,
-        pvVoltage: summary.pvVoltage,
-        pvCurrent: summary.pvCurrent,
-        pvEnergy: summary.pvEnergy,
-        batCharge: summary.batCharge,
-        batDischarge: summary.batDischarge,
-        loadEnergy: summary.loadEnergy,
-        gridImport: summary.gridImport,
-        gridExport: summary.gridExport,
-        outputFreq: summary.outputFreq,
-        irradiance: summary.irradiance,
-        co2Reduced: summary.co2Reduced,
-        ktoe: summary.ktoe,
+        timestamp: currentTsStr,
+        pvPower: summary.pvPower ?? 0,
+        pvVoltage: summary.pvVoltage ?? 0,
+        pvCurrent: summary.pvCurrent ?? 0,
+        pvEnergy: summary.pvEnergy ?? 0,
+        batCharge: summary.batCharge ?? 0,
+        batDischarge: summary.batDischarge ?? 0,
+        loadEnergy: summary.loadEnergy ?? 0,
+        gridImport: summary.gridImport ?? 0,
+        gridExport: summary.gridExport ?? 0,
+        outputFreq: summary.outputFreq ?? 0,
+        irradiance: summary.irradiance ?? 0,
+        co2Reduced: summary.co2Reduced ?? 0,
+        ktoe: summary.ktoe ?? 0,
       });
 
-      console.log("➕ Row appended:", summary.timestamp);
+      console.log("➕ Row appended:", currentTsStr);
     } else {
       console.log("⏭️ Duplicate timestamp, skip append");
     }
