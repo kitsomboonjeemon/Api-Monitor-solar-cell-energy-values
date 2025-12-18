@@ -3,7 +3,6 @@ const ExcelJS = require("exceljs");
 const fs = require("fs-extra");
 const path = require("path");
 
-// LOG พิสูจน์ว่าไฟล์นี้ถูกโหลดจริง
 console.log("✅ exportRoutes loaded");
 
 const router = express.Router();
@@ -11,21 +10,11 @@ const router = express.Router();
 const DATA_DIR = path.resolve(__dirname, "../data");
 const FILE_PATH = path.join(DATA_DIR, "solar_latest.xlsx");
 
-// ===== helper: safe timestamp =====
+// ===== helper =====
 function normalizeTimestamp(ts) {
   if (!ts) return new Date();
-
-  // รองรับ "YYYY-MM-DD HH:mm:ss"
-  const d = new Date(
-    typeof ts === "string" ? ts.replace(" ", "T") : ts
-  );
-
-  if (isNaN(d.getTime())) {
-    console.warn("⚠️ Invalid timestamp, fallback to now:", ts);
-    return new Date();
-  }
-
-  return d;
+  const d = new Date(typeof ts === "string" ? ts.replace(" ", "T") : ts);
+  return isNaN(d.getTime()) ? new Date() : d;
 }
 
 router.get("/export/latest-excel", async (req, res) => {
@@ -33,9 +22,7 @@ router.get("/export/latest-excel", async (req, res) => {
 
   try {
     const summary = req.app.get("cachedSummary");
-
     if (!summary) {
-      console.log("⚠️ Summary not ready");
       return res.status(503).json({ error: "Summary not ready" });
     }
 
@@ -44,19 +31,21 @@ router.get("/export/latest-excel", async (req, res) => {
     const wb = new ExcelJS.Workbook();
     let ws;
 
-    // ===== load or create workbook =====
+    // ===== load workbook safely =====
     if (fs.existsSync(FILE_PATH)) {
       try {
         await wb.xlsx.readFile(FILE_PATH);
         ws = wb.getWorksheet("History");
-      } catch (e) {
-        console.warn("⚠️ Excel corrupted, recreating");
+      } catch (err) {
+        console.warn("⚠️ Excel corrupted, deleting and recreating");
+        await fs.remove(FILE_PATH);
         ws = null;
       }
     }
 
+    // ===== create workbook/sheet once =====
     if (!ws) {
-      console.log("🆕 Creating new Excel file / sheet");
+      console.log("🆕 Creating new Excel workbook");
       ws = wb.addWorksheet("History");
       ws.columns = [
         { header: "Timestamp", key: "timestamp" },
@@ -76,19 +65,18 @@ router.get("/export/latest-excel", async (req, res) => {
       ];
     }
 
-    // ===== timestamp normalize =====
+    // ===== timestamp =====
     const ts = normalizeTimestamp(summary.timestamp);
-    const currentTsStr = ts.toISOString();
+    const currentTs = ts.toISOString();
 
-    // ===== duplicate guard =====
     const lastRow = ws.lastRow;
-    const lastTsStr = lastRow?.getCell(1)?.value
-      ? new Date(lastRow.getCell(1).value).toISOString()
-      : null;
+    const lastTs =
+      lastRow?.getCell(1)?.value &&
+      new Date(lastRow.getCell(1).value).toISOString();
 
-    if (lastTsStr !== currentTsStr) {
+    if (lastTs !== currentTs) {
       ws.addRow({
-        timestamp: currentTsStr,
+        timestamp: currentTs,
         pvPower: summary.pvPower ?? 0,
         pvVoltage: summary.pvVoltage ?? 0,
         pvCurrent: summary.pvCurrent ?? 0,
@@ -104,14 +92,12 @@ router.get("/export/latest-excel", async (req, res) => {
         ktoe: summary.ktoe ?? 0,
       });
 
-      console.log("➕ Row appended:", currentTsStr);
+      console.log("➕ Row appended:", currentTs);
     } else {
-      console.log("⏭️ Duplicate timestamp, skip append");
+      console.log("⏭️ Duplicate timestamp, skipped");
     }
 
     await wb.xlsx.writeFile(FILE_PATH);
-
-    console.log("📤 Sending Excel:", FILE_PATH);
     res.download(FILE_PATH, "solar_latest.xlsx");
   } catch (err) {
     console.error("❌ Export error:", err);
