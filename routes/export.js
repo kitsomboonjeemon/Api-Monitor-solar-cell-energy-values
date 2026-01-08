@@ -44,18 +44,22 @@ router.get("/export/latest-excel", async (req, res) => {
       ws = wb.addWorksheet("History");
       ws.columns = [
         { header: "Timestamp", key: "timestamp" },
-        { header: "PV Power", key: "pvPower" },
-        { header: "PV Voltage", key: "pvVoltage" },
-        { header: "PV Current", key: "pvCurrent" },
-        { header: "PV Energy", key: "pvEnergy" },
-        { header: "Battery Charge", key: "batCharge" },
-        { header: "Battery Discharge", key: "batDischarge" },
-        { header: "Load Energy", key: "loadEnergy" },
-        { header: "Grid Import", key: "gridImport" },
-        { header: "Grid Export", key: "gridExport" },
-        { header: "Output Freq", key: "outputFreq" },
-        { header: "Irradiance", key: "irradiance" },
-        { header: "CO2 Reduced", key: "co2Reduced" },
+        { header: "PV Power (kW)", key: "pvPower" },
+        { header: "PV Voltage (V)", key: "pvVoltage" },
+        { header: "PV Current (A)", key: "pvCurrent" },
+        { header: "PV Energy (kWh)", key: "pvEnergy" },
+        { header: "Battery Charge (kWh)", key: "batCharge" },
+        { header: "Battery Discharge (kWh)", key: "batDischarge" },
+
+        // ⭐ เพิ่ม Load P (kW)
+        { header: "Load Power (kW)", key: "loadPower" },
+
+        { header: "Load Energy (kWh)", key: "loadEnergy" },
+        { header: "Grid Import (kWh)", key: "gridImport" },
+        { header: "Grid Export (kWh)", key: "gridExport" },
+        { header: "Output Freq (Hz)", key: "outputFreq" },
+        { header: "Irradiance (W/m²)", key: "irradiance" },
+        { header: "CO2 Reduced (kg)", key: "co2Reduced" },
         { header: "KTOE", key: "ktoe" },
       ];
     }
@@ -75,6 +79,10 @@ router.get("/export/latest-excel", async (req, res) => {
         pvEnergy: Number(summary.pvEnergy) || 0,
         batCharge: Number(summary.batCharge) || 0,
         batDischarge: Number(summary.batDischarge) || 0,
+
+        // ⭐ ค่า Load P (kW) ที่คุณคำนวณจาก loadActivePower
+        loadPower: Number(summary.loadPower) || 0,
+
         loadEnergy: Number(summary.loadEnergy) || 0,
         gridImport: Number(summary.gridImport) || 0,
         gridExport: Number(summary.gridExport) || 0,

@@ -56,6 +56,7 @@ const fetchWeather = async () => {
 };
 
 // ========== FETCH REALTIME ==========
+// ========== FETCH REALTIME ==========
 const fetchRealtimeData = async () => {
   try {
     let data;
@@ -80,8 +81,14 @@ const fetchRealtimeData = async () => {
     const pvEnergy = safeParse(data.epvToday);
     const weather = await fetchWeather();
 
+    // ⭐ Load P (kW) ที่ถูกต้องจาก Atess
+    let loadPower = safeParse(data.loadActivePower);
+    if (loadPower > 100) loadPower = loadPower / 1000; // กันกรณีหน่วยเป็น W
+
     return {
       timestamp: data.time || new Date().toISOString(),
+
+      // ===== PV =====
       pvPower,
       pvVoltage: safeParse(data.vpv),
       pvCurrent:
@@ -90,11 +97,20 @@ const fetchRealtimeData = async () => {
           safeParse(data.ipvb) +
           safeParse(data.ipvc),
       pvEnergy,
+
+      // ===== Battery =====
       batCharge: safeParse(data.echargeToday),
       batDischarge: safeParse(data.edischargeToday),
+
+      // ===== Grid =====
       gridImport: safeParse(data.egridToday),
       gridExport: safeParse(data.etoGridToday),
+
+      // ===== Load =====
+      loadPower, // ⭐ เพิ่ม Load P (kW)
       loadEnergy: safeParse(data.eloadToday),
+
+      // ===== Other =====
       outputFreq: safeParse(data.fac),
       co2Reduced: pvEnergy * 0.9,
       ktoe: pvEnergy / 11630,
@@ -109,6 +125,7 @@ const fetchRealtimeData = async () => {
     return null;
   }
 };
+
 
 // ========== EXPORT ==========
 module.exports = {
