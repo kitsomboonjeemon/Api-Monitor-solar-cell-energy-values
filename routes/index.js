@@ -5,7 +5,7 @@ const router = express.Router();
 
 const BASE_URL = "https://www.enerclo-atesspower.com/api/v1";
 const AUTH_HEADER = {
-  Authorization: "Basic MTcxOTpjOTAyNGVmMjA5ZWU0ZWFhOTgyYWQ2YWQ2NTQxZDlhYg==",
+  Authorization: "Basic ",
   "Accept-Language": "en",
 };
 
