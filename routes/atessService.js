@@ -5,7 +5,7 @@ const fetch = require("node-fetch");
 const DEVICE_SN = "YKD0F1022A";
 const BASE_URL = "https://www.enerclo-atesspower.com/api/v1";
 const AUTH_HEADER = {
-  Authorization: "Basic MTcxOTpjOTAyNGVmMjA5ZWU0ZWFhOTgyYWQ2YWQ2NTQxZDlhYg==",
+  Authorization: "Basic ",
   "Accept-Language": "en",
 };
 
